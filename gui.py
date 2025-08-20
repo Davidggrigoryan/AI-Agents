@@ -80,6 +80,7 @@ class ControlPanel:
         self.tasks: list[Task] = []
         self._task_counter = 1
         self._sort_dirs: dict[str, bool] = {}
+        self.load_tasks()
 
         self.notebook = ttk.Notebook(master)
         self.notebook.pack(fill="both", expand=True)
@@ -97,12 +98,7 @@ class ControlPanel:
         self._build_settings_tab()
 
         self._refresh_agent_lists()
-
-        # populate with example data
-        self.add_task("Write report", "Analyst", "Researcher-1", 1, auto=True)
-        self.add_task("Conduct research", "Analyst", "Researcher-1", 1, auto=True)
-        self.add_task("Design UI", "Analyst", "Researcher-1", 1, auto=True)
-        self.add_task("Analyze data", "Researcher-2", "Researcher-2", 1, auto=True)
+        self.refresh_table()
 
     def _build_main_tab(self) -> None:
         top_frame = ttk.Frame(self.main_tab)
@@ -168,6 +164,7 @@ class ControlPanel:
         )
         self.tree = ttk.Treeview(self.main_tab, columns=columns, show="headings", height=8)
         self.tree.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.tree.bind("<Double-1>", self.on_task_double_click)
 
         headings = {
             "id": "ID",
@@ -245,16 +242,21 @@ class ControlPanel:
 
         ttk.Label(frame, text="OpenAI API Key").grid(row=0, column=0, sticky="w")
         self.api_key_var = tk.StringVar(value=self.config.get("openai_key", ""))
-        self.api_key_entry = ttk.Entry(frame, textvariable=self.api_key_var, width=40, show="*")
+        self.api_key_entry = ttk.Entry(frame, textvariable=self.api_key_var, width=60, show="*")
         self.api_key_entry.grid(row=0, column=1, padx=5, pady=2, sticky="w")
         ToolTip(self.api_key_entry, "OpenAI API ключ")
+        self.api_key_required = 51
+        self.key_count_var = tk.StringVar()
+        ttk.Label(frame, textvariable=self.key_count_var).grid(row=0, column=2, padx=5, sticky="w")
+        self._update_key_count()
+        self.api_key_var.trace_add("write", lambda *_: self._update_key_count())
         self.show_key = False
         self.show_btn = ttk.Button(frame, text="Показать", command=self.toggle_key_visibility)
-        self.show_btn.grid(row=0, column=2, padx=5)
+        self.show_btn.grid(row=0, column=3, padx=5)
         paste_btn = ttk.Button(frame, text="Вставить", command=self.paste_key)
-        paste_btn.grid(row=0, column=3, padx=5)
+        paste_btn.grid(row=0, column=4, padx=5)
         ToolTip(paste_btn, "Вставить ключ из буфера")
-        ttk.Button(frame, text="Удалить ключ", command=self.delete_key).grid(row=0, column=4, padx=5)
+        ttk.Button(frame, text="Удалить ключ", command=self.delete_key).grid(row=0, column=5, padx=5)
 
         ttk.Label(frame, text="Ollama порт").grid(row=1, column=0, sticky="w")
         self.ollama_port_var = tk.StringVar(value=str(self.config.get("ollama_port", "")))
@@ -271,6 +273,10 @@ class ControlPanel:
     def _valid_port(self, port: str) -> bool:
         """Validate that the string is a valid TCP port."""
         return port.isdigit() and 1 <= int(port) <= 65535
+
+    def _update_key_count(self) -> None:
+        """Update API key length indicator."""
+        self.key_count_var.set(f"{len(self.api_key_var.get())}/{self.api_key_required}")
 
     def _relative(self, dt: datetime) -> str:
         diff = datetime.now() - dt
@@ -439,6 +445,55 @@ class ControlPanel:
         data = [agent.__dict__ for agent in self.agents]
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def load_tasks(self) -> None:
+        path = Path("tasks.json")
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                self.tasks = [
+                    Task(
+                        id=item["id"],
+                        title=item.get("title", ""),
+                        role=item.get("role", ""),
+                        agent=item.get("agent", ""),
+                        priority=item.get("priority", 1),
+                        cpu=item.get("cpu", 0.0),
+                        ram=item.get("ram", 0),
+                        status=item.get("status", "Pending"),
+                        created=datetime.fromisoformat(item.get("created", datetime.now().isoformat())),
+                        updated=datetime.fromisoformat(item.get("updated", datetime.now().isoformat())),
+                    )
+                    for item in data
+                ]
+                if self.tasks:
+                    self._task_counter = max(t.id for t in self.tasks) + 1
+                else:
+                    self._task_counter = 1
+                return
+            except Exception:
+                pass
+        self.tasks = []
+        self._task_counter = 1
+
+    def save_tasks(self) -> None:
+        path = Path("tasks.json")
+        data = [
+            {
+                "id": t.id,
+                "title": t.title,
+                "role": t.role,
+                "agent": t.agent,
+                "priority": t.priority,
+                "cpu": t.cpu,
+                "ram": t.ram,
+                "status": t.status,
+                "created": t.created.isoformat(),
+                "updated": t.updated.isoformat(),
+            }
+            for t in self.tasks
+        ]
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
     # ------------------------------------------------------------------
     # actions
     def add_task(
@@ -471,6 +526,7 @@ class ControlPanel:
         self.tasks.append(task)
         self._task_counter += 1
         self.refresh_table()
+        self.save_tasks()
         if not auto:
             self.title_entry.delete(0, tk.END)
             self.role_entry.delete(0, tk.END)
@@ -487,6 +543,7 @@ class ControlPanel:
                     task.updated = datetime.now()
             self.refresh_table()
             self.save_agents()
+            self.save_tasks()
             self.status_var.set(f"Агент {name} запущен")
 
     def stop_agent(self) -> None:
@@ -500,6 +557,7 @@ class ControlPanel:
                     task.updated = datetime.now()
             self.refresh_table()
             self.save_agents()
+            self.save_tasks()
             self.status_var.set(f"Агент {name} остановлен")
 
     def delete_task(self) -> None:
@@ -511,7 +569,51 @@ class ControlPanel:
         ids = {int(self.tree.item(item, "values")[0]) for item in selected}
         self.tasks = [t for t in self.tasks if t.id not in ids]
         self.refresh_table()
+        self.save_tasks()
         self.status_var.set("Задача удалена")
+
+    def on_task_double_click(self, event: tk.Event) -> None:
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        task_id = int(self.tree.item(item, "values")[0])
+        self.edit_task(task_id)
+
+    def edit_task(self, task_id: int) -> None:
+        task = next((t for t in self.tasks if t.id == task_id), None)
+        if not task:
+            return
+        win = tk.Toplevel(self.master)
+        win.title("Редактировать задачу")
+        ttk.Label(win, text="Заголовок").grid(row=0, column=0, sticky="w")
+        title_entry = ttk.Entry(win, width=30)
+        title_entry.insert(0, task.title)
+        title_entry.grid(row=0, column=1, padx=5, pady=2)
+        ttk.Label(win, text="Роль").grid(row=1, column=0, sticky="w")
+        role_entry = ttk.Entry(win, width=20)
+        role_entry.insert(0, task.role)
+        role_entry.grid(row=1, column=1, padx=5, pady=2)
+        ttk.Label(win, text="Агент").grid(row=2, column=0, sticky="w")
+        agent_combo = ttk.Combobox(win, values=[a.name for a in self.agents], state="readonly", width=18)
+        agent_combo.grid(row=2, column=1, padx=5, pady=2)
+        if task.agent in agent_combo["values"]:
+            agent_combo.set(task.agent)
+        ttk.Label(win, text="Приоритет").grid(row=3, column=0, sticky="w")
+        prio_spin = ttk.Spinbox(win, from_=1, to=10, width=5)
+        prio_spin.set(task.priority)
+        prio_spin.grid(row=3, column=1, padx=5, pady=2, sticky="w")
+
+        def save_changes() -> None:
+            task.title = title_entry.get().strip()
+            task.role = role_entry.get().strip()
+            task.agent = agent_combo.get()
+            task.priority = int(prio_spin.get())
+            task.updated = datetime.now()
+            self.refresh_table()
+            self.save_tasks()
+            win.destroy()
+
+        ttk.Button(win, text="Сохранить", command=save_changes).grid(row=4, column=0, columnspan=2, pady=5)
 
     def sort_tasks(self, column: str) -> None:
         mapping = {
