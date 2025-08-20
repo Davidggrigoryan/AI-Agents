@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
+import re
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -206,6 +207,14 @@ class ControlPanel:
 
     # ------------------------------------------------------------------
     # utility methods
+    def _valid_api_key(self, key: str) -> bool:
+        """Validate OpenAI API key format."""
+        return bool(re.fullmatch(r"sk-[A-Za-z0-9]{32,}", key))
+
+    def _valid_port(self, port: str) -> bool:
+        """Validate that the string is a valid TCP port."""
+        return port.isdigit() and 1 <= int(port) <= 65535
+
     def _relative(self, dt: datetime) -> str:
         diff = datetime.now() - dt
         if diff < timedelta(minutes=1):
@@ -279,8 +288,19 @@ class ControlPanel:
     def save_settings(self) -> None:
         if not messagebox.askyesno("Сохранить настройки", "Сохранить ключ и порт?"):
             return
-        self.config["openai_key"] = self.api_key_var.get().strip()
-        self.config["ollama_port"] = self.ollama_port_var.get().strip()
+        key = self.api_key_var.get().strip()
+        port = self.ollama_port_var.get().strip()
+
+        if key and not self._valid_api_key(key):
+            messagebox.showerror("Настройки", "Некорректный OpenAI API ключ")
+            return
+
+        if not self._valid_port(port):
+            messagebox.showerror("Настройки", "Некорректный порт Ollama")
+            return
+
+        self.config["openai_key"] = key
+        self.config["ollama_port"] = port
         self.save_config()
         self.status_var.set("Настройки сохранены")
         messagebox.showinfo("Настройки", "Настройки сохранены")
