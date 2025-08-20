@@ -1,6 +1,7 @@
-# AI Agent Manager GUI
+# AI Agent Control Panel
 
-This project provides a minimal Tkinter-based GUI to manage simple AI agents.
+This project provides a Tkinter-based control panel to manage simple AI agents
+and their tasks.
 
 ## Usage
 
@@ -8,4 +9,5 @@ This project provides a minimal Tkinter-based GUI to manage simple AI agents.
 python gui.py
 ```
 
-The window allows you to add agents, start or stop them, and remove them from the list.
+The window allows you to create tasks, assign them to agents, and start or stop
+agents. The layout roughly follows the provided mock‑up.
