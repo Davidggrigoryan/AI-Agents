@@ -8,7 +8,7 @@ from pathlib import Path
 import json
 import re
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 from agent import AIAgent
 
@@ -19,9 +19,11 @@ class Task:
 
     id: int
     title: str
-    role: str
     agent: str
-    priority: int
+    role: str = ""
+    priority: int = 1
+    description: str = ""
+    file: str | None = None
     cpu: float = 0.0
     ram: int = 0
     status: str = "Pending"
@@ -80,6 +82,7 @@ class ControlPanel:
         self.tasks: list[Task] = []
         self._task_counter = 1
         self._sort_dirs: dict[str, bool] = {}
+        self.editing_task: Task | None = None
 
         self.notebook = ttk.Notebook(master)
         self.notebook.pack(fill="both", expand=True)
@@ -87,6 +90,10 @@ class ControlPanel:
         self.main_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.main_tab, text="Список задач")
         self._build_main_tab()
+
+        self.create_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.create_tab, text="Создать задачу")
+        self._build_create_tab()
 
         self.agents_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.agents_tab, text="Агенты")
@@ -133,9 +140,17 @@ class ControlPanel:
         self.prio_spin.grid(row=1, column=3, padx=5, pady=2)
         ToolTip(self.prio_spin, "Приоритет задачи")
 
-        add_task = ttk.Button(task_frame, text="Добавить задачу", command=self.add_task)
-        add_task.grid(row=2, column=0, columnspan=4, pady=5)
+        btn_frame = ttk.Frame(task_frame)
+        btn_frame.grid(row=2, column=0, columnspan=4, pady=5)
+        add_task = ttk.Button(btn_frame, text="Добавить задачу", command=self.add_task)
+        add_task.pack(side="left", padx=5)
         ToolTip(add_task, "Добавить задачу в список")
+        del_task = ttk.Button(btn_frame, text="Удалить задачу", command=self.delete_task)
+        del_task.pack(side="left", padx=5)
+        ToolTip(del_task, "Удалить выбранные задачи")
+        edit_task = ttk.Button(btn_frame, text="Редактировать задачу", command=self.edit_task)
+        edit_task.pack(side="left", padx=5)
+        ToolTip(edit_task, "Редактировать выбранную задачу")
 
         # ----- agent control -----
         agent_frame = ttk.LabelFrame(top_frame, text="Agent")
@@ -166,8 +181,9 @@ class ControlPanel:
             "updated",
             "start",
         )
-        self.tree = ttk.Treeview(self.main_tab, columns=columns, show="headings", height=8)
+        self.tree = ttk.Treeview(self.main_tab, columns=columns, show="headings", height=8, selectmode="browse")
         self.tree.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.tree.bind("<ButtonRelease-1>", self.on_tree_click)
 
         headings = {
             "id": "ID",
@@ -189,14 +205,35 @@ class ControlPanel:
         self.tree.column("updated", width=110)
         self.tree.column("start", width=80)
 
-        del_btn = ttk.Button(self.main_tab, text="Удалить выбранное", command=self.delete_task)
-        del_btn.pack(padx=10, pady=(0, 10), anchor="e")
-        ToolTip(del_btn, "Удалить выбранные задачи")
-
         # ----- status bar -----
         self.status_var = tk.StringVar(value="Готово")
         status = ttk.Label(self.main_tab, textvariable=self.status_var, relief="sunken", anchor="w")
         status.pack(fill="x", side="bottom")
+
+    def _build_create_tab(self) -> None:
+        frame = ttk.Frame(self.create_tab)
+        frame.pack(fill="x", padx=10, pady=10)
+
+        ttk.Label(frame, text="Название задачи").grid(row=0, column=0, sticky="w")
+        self.create_title = ttk.Entry(frame, width=40)
+        self.create_title.grid(row=0, column=1, padx=5, pady=2, sticky="w")
+
+        ttk.Label(frame, text="Описание задачи").grid(row=1, column=0, sticky="nw")
+        self.create_desc = tk.Text(frame, width=40, height=5)
+        self.create_desc.grid(row=1, column=1, padx=5, pady=2, sticky="w")
+
+        ttk.Label(frame, text="Агент").grid(row=2, column=0, sticky="w")
+        self.create_agent_combo = ttk.Combobox(frame, state="readonly", width=37)
+        self.create_agent_combo.grid(row=2, column=1, padx=5, pady=2, sticky="w")
+
+        ttk.Label(frame, text="Файл").grid(row=3, column=0, sticky="w")
+        file_frame = ttk.Frame(frame)
+        file_frame.grid(row=3, column=1, sticky="w")
+        self.file_var = tk.StringVar()
+        ttk.Entry(file_frame, textvariable=self.file_var, width=30).pack(side="left", padx=(0, 5))
+        ttk.Button(file_frame, text="Обзор", command=self.browse_file).pack(side="left")
+
+        ttk.Button(frame, text="Сохранить задачу", command=self.save_task_form).grid(row=4, column=1, pady=5, sticky="w")
 
     def _build_agents_tab(self) -> None:
         list_frame = ttk.Frame(self.agents_tab)
@@ -291,9 +328,13 @@ class ControlPanel:
         names = [a.name for a in self.agents]
         self.agent_combo["values"] = names
         self.agent_select["values"] = names
+        if hasattr(self, "create_agent_combo"):
+            self.create_agent_combo["values"] = names
         if names:
             self.agent_combo.current(0)
             self.agent_select.current(0)
+            if hasattr(self, "create_agent_combo"):
+                self.create_agent_combo.current(0)
         self.agent_listbox.delete(0, tk.END)
         for name in names:
             self.agent_listbox.insert(tk.END, name)
@@ -447,6 +488,8 @@ class ControlPanel:
         role: str | None = None,
         agent_name: str | None = None,
         prio: int | None = None,
+        description: str | None = None,
+        file_path: str | None = None,
         *,
         auto: bool = False,
     ) -> None:
@@ -467,6 +510,8 @@ class ControlPanel:
             role=role or "",
             agent=agent_name or "",
             priority=prio or 1,
+            description=description or "",
+            file=file_path,
         )
         self.tasks.append(task)
         self._task_counter += 1
@@ -475,6 +520,59 @@ class ControlPanel:
             self.title_entry.delete(0, tk.END)
             self.role_entry.delete(0, tk.END)
             self.status_var.set(f"Задача '{task.title}' добавлена")
+
+    def browse_file(self) -> None:
+        path = filedialog.askopenfilename()
+        if path:
+            self.file_var.set(path)
+
+    def save_task_form(self) -> None:
+        title = self.create_title.get().strip()
+        desc = self.create_desc.get("1.0", tk.END).strip()
+        agent = self.create_agent_combo.get()
+        file_path = self.file_var.get().strip() or None
+        if not title:
+            messagebox.showwarning("Задачи", "Введите название задачи")
+            return
+        if self.editing_task:
+            task = self.editing_task
+            task.title = title
+            task.description = desc
+            task.agent = agent
+            task.file = file_path
+            task.updated = datetime.now()
+            self.editing_task = None
+        else:
+            self.add_task(title, agent_name=agent, description=desc, file_path=file_path, auto=True)
+        self.create_title.delete(0, tk.END)
+        self.create_desc.delete("1.0", tk.END)
+        self.file_var.set("")
+        self.refresh_table()
+        self.status_var.set("Задача сохранена")
+        self.notebook.select(self.main_tab)
+
+    def edit_task(self) -> None:
+        selected = self.tree.selection()
+        if not selected:
+            return
+        item = selected[0]
+        task_id = int(self.tree.item(item, "values")[0])
+        task = next((t for t in self.tasks if t.id == task_id), None)
+        if not task:
+            return
+        self.editing_task = task
+        self.create_title.delete(0, tk.END)
+        self.create_title.insert(0, task.title)
+        self.create_desc.delete("1.0", tk.END)
+        self.create_desc.insert("1.0", task.description)
+        self.create_agent_combo.set(task.agent)
+        self.file_var.set(task.file or "")
+        self.notebook.select(self.create_tab)
+
+    def on_tree_click(self, event: tk.Event) -> None:
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
 
     def start_agent(self) -> None:
         name = self.agent_select.get()
