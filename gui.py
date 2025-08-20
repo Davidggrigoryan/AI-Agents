@@ -10,6 +10,9 @@ import re
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
+# maximum length for OpenAI API key
+API_KEY_MAX_LEN = 400
+
 from agent import AIAgent
 
 
@@ -104,12 +107,7 @@ class ControlPanel:
         self._build_settings_tab()
 
         self._refresh_agent_lists()
-
-        # populate with example data
-        self.add_task("Write report", "Analyst", "Researcher-1", 1, auto=True)
-        self.add_task("Conduct research", "Analyst", "Researcher-1", 1, auto=True)
-        self.add_task("Design UI", "Analyst", "Researcher-1", 1, auto=True)
-        self.add_task("Analyze data", "Researcher-2", "Researcher-2", 1, auto=True)
+        self.load_tasks()
 
     def _build_main_tab(self) -> None:
         top_frame = ttk.Frame(self.main_tab)
@@ -184,6 +182,7 @@ class ControlPanel:
         self.tree = ttk.Treeview(self.main_tab, columns=columns, show="headings", height=8, selectmode="browse")
         self.tree.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.tree.bind("<ButtonRelease-1>", self.on_tree_click)
+        self.tree.bind("<Double-1>", self.on_tree_double_click)
 
         headings = {
             "id": "ID",
@@ -282,9 +281,10 @@ class ControlPanel:
 
         ttk.Label(frame, text="OpenAI API Key").grid(row=0, column=0, sticky="w")
         self.api_key_var = tk.StringVar(value=self.config.get("openai_key", ""))
-        self.api_key_entry = ttk.Entry(frame, textvariable=self.api_key_var, width=40, show="*")
+        self.api_key_entry = ttk.Entry(frame, textvariable=self.api_key_var, width=60, show="*")
         self.api_key_entry.grid(row=0, column=1, padx=5, pady=2, sticky="w")
         ToolTip(self.api_key_entry, "OpenAI API ключ")
+        self.api_key_entry.bind("<KeyRelease>", self.update_key_info)
         self.show_key = False
         self.show_btn = ttk.Button(frame, text="Показать", command=self.toggle_key_visibility)
         self.show_btn.grid(row=0, column=2, padx=5)
@@ -292,6 +292,24 @@ class ControlPanel:
         paste_btn.grid(row=0, column=3, padx=5)
         ToolTip(paste_btn, "Вставить ключ из буфера")
         ttk.Button(frame, text="Удалить ключ", command=self.delete_key).grid(row=0, column=4, padx=5)
+
+        self.key_count_label = ttk.Label(frame, text="0/0")
+        self.key_count_label.grid(row=0, column=5, padx=5, sticky="w")
+
+        cond_frame = ttk.Frame(frame)
+        cond_frame.grid(row=0, column=6, padx=(10, 0), sticky="w")
+        self.condition_labels: list[ttk.Label] = []
+        cond_texts = [
+            "Длина 400 символов",
+            "Начинается с 'sk-'",
+            "Только буквы и цифры",
+        ]
+        for i, text in enumerate(cond_texts):
+            lbl = ttk.Label(cond_frame, text=text, foreground="black")
+            lbl.grid(row=i, column=0, sticky="w")
+            self.condition_labels.append(lbl)
+
+        self.update_key_info()
 
         ttk.Label(frame, text="Ollama порт").grid(row=1, column=0, sticky="w")
         self.ollama_port_var = tk.StringVar(value=str(self.config.get("ollama_port", "")))
@@ -303,11 +321,31 @@ class ControlPanel:
     # utility methods
     def _valid_api_key(self, key: str) -> bool:
         """Validate OpenAI API key format."""
-        return bool(re.fullmatch(r"sk-[A-Za-z0-9]{32,}", key))
+        pattern = fr"sk-[A-Za-z0-9]{{{API_KEY_MAX_LEN-3}}}"
+        return bool(re.fullmatch(pattern, key))
 
     def _valid_port(self, port: str) -> bool:
         """Validate that the string is a valid TCP port."""
         return port.isdigit() and 1 <= int(port) <= 65535
+
+    def update_key_info(self, _event: tk.Event | None = None) -> None:
+        key = self.api_key_var.get()
+        if len(key) > API_KEY_MAX_LEN:
+            self.api_key_var.set(key[:API_KEY_MAX_LEN])
+            key = self.api_key_var.get()
+        self.key_count_label.config(text=f"{len(key)}/{API_KEY_MAX_LEN}")
+        checks = [
+            (len(key) == API_KEY_MAX_LEN, self.condition_labels[0]),
+            (key.startswith("sk-"), self.condition_labels[1]),
+            (re.fullmatch(r"sk-[A-Za-z0-9]*", key) is not None, self.condition_labels[2]),
+        ]
+        for ok, lbl in checks:
+            if not key:
+                lbl.config(foreground="black")
+            elif ok:
+                lbl.config(foreground="green")
+            else:
+                lbl.config(foreground="red")
 
     def _relative(self, dt: datetime) -> str:
         diff = datetime.now() - dt
@@ -431,6 +469,7 @@ class ControlPanel:
         self.save_config()
         self.status_var.set("Ключ удален")
         messagebox.showinfo("Настройки", "Ключ удален")
+        self.update_key_info()
 
     def paste_key(self) -> None:
         try:
@@ -439,6 +478,7 @@ class ControlPanel:
             messagebox.showerror("Настройки", "Буфер обмена пуст")
             return
         self.api_key_var.set(key)
+        self.update_key_info()
 
     def toggle_key_visibility(self) -> None:
         self.show_key = not self.show_key
@@ -480,6 +520,32 @@ class ControlPanel:
         data = [agent.__dict__ for agent in self.agents]
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def load_tasks(self) -> None:
+        path = Path("tasks.json")
+        self.tasks = []
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                for item in data:
+                    item["created"] = datetime.fromisoformat(item["created"])
+                    item["updated"] = datetime.fromisoformat(item["updated"])
+                    self.tasks.append(Task(**item))
+                if self.tasks:
+                    self._task_counter = max(t.id for t in self.tasks) + 1
+            except Exception:
+                self.tasks = []
+        self.refresh_table()
+
+    def save_tasks(self) -> None:
+        path = Path("tasks.json")
+        data = []
+        for t in self.tasks:
+            item = t.__dict__.copy()
+            item["created"] = t.created.isoformat()
+            item["updated"] = t.updated.isoformat()
+            data.append(item)
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
     # ------------------------------------------------------------------
     # actions
     def add_task(
@@ -516,6 +582,7 @@ class ControlPanel:
         self.tasks.append(task)
         self._task_counter += 1
         self.refresh_table()
+        self.save_tasks()
         if not auto:
             self.title_entry.delete(0, tk.END)
             self.role_entry.delete(0, tk.END)
@@ -542,6 +609,7 @@ class ControlPanel:
             task.file = file_path
             task.updated = datetime.now()
             self.editing_task = None
+            self.save_tasks()
         else:
             self.add_task(title, agent_name=agent, description=desc, file_path=file_path, auto=True)
         self.create_title.delete(0, tk.END)
@@ -574,6 +642,12 @@ class ControlPanel:
         if item:
             self.tree.selection_set(item)
 
+    def on_tree_double_click(self, event: tk.Event) -> None:
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+            self.edit_task()
+
     def start_agent(self) -> None:
         name = self.agent_select.get()
         agent = self._find_agent(name)
@@ -584,6 +658,7 @@ class ControlPanel:
                     task.status = "In Progress"
                     task.updated = datetime.now()
             self.refresh_table()
+            self.save_tasks()
             self.save_agents()
             self.status_var.set(f"Агент {name} запущен")
 
@@ -597,6 +672,7 @@ class ControlPanel:
                     task.status = "Stopped"
                     task.updated = datetime.now()
             self.refresh_table()
+            self.save_tasks()
             self.save_agents()
             self.status_var.set(f"Агент {name} остановлен")
 
@@ -609,6 +685,7 @@ class ControlPanel:
         ids = {int(self.tree.item(item, "values")[0]) for item in selected}
         self.tasks = [t for t in self.tasks if t.id not in ids]
         self.refresh_table()
+        self.save_tasks()
         self.status_var.set("Задача удалена")
 
     def sort_tasks(self, column: str) -> None:
