@@ -5,8 +5,9 @@ and their tasks.
 
 The interface includes tabs for managing agents and application settings:
 
-- **Agents** – create or delete agents, set a prompt for their behavior, and
-  choose between cloud (OpenAI API) or local (Ollama) execution.
+- **Agents** – create or delete agents, set a prompt for their behavior, choose
+  between cloud (OpenAI API) or local (Ollama) execution, and persist agent
+  changes in `agents.json`.
 - **Settings** – enter and persist an OpenAI API key and configure the port used
   for a local Ollama instance.
 

@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Researcher-1",
+    "running": false,
+    "prompt": "",
+    "mode": "local"
+  },
+  {
+    "name": "Researcher-2",
+    "running": false,
+    "prompt": "",
+    "mode": "local"
+  }
+]

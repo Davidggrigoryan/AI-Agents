@@ -37,9 +37,10 @@ class ControlPanel:
         self.master.title("Agents – Control Panel")
 
         self.load_config()
+        self.agents: list[AIAgent] = []
+        self.load_agents()
 
         # data containers
-        self.agents: list[AIAgent] = [AIAgent("Researcher-1"), AIAgent("Researcher-2")]
         self.tasks: list[Task] = []
         self._task_counter = 1
 
@@ -248,6 +249,7 @@ class ControlPanel:
         self.agents.append(AIAgent(name))
         self.new_agent_entry.delete(0, tk.END)
         self._refresh_agent_lists()
+        self.save_agents()
         self.status_var.set(f"Агент {name} создан")
 
     def delete_agent(self) -> None:
@@ -255,13 +257,17 @@ class ControlPanel:
         if not selection:
             return
         name = self.agent_listbox.get(selection[0])
+        if not messagebox.askyesno("Удалить агента", f"Удалить агента {name}?"):
+            return
         agent = self._find_agent(name)
         if agent:
             self.agents.remove(agent)
             self.tasks = [t for t in self.tasks if t.agent != name]
             self.refresh_table()
         self._refresh_agent_lists()
+        self.save_agents()
         self.status_var.set(f"Агент {name} удален")
+        messagebox.showinfo("Агенты", f"Агент {name} удален")
 
     def on_agent_select(self, event: tk.Event) -> None:
         selection = self.agent_listbox.curselection()
@@ -277,13 +283,22 @@ class ControlPanel:
     def save_agent_settings(self) -> None:
         selection = self.agent_listbox.curselection()
         if not selection:
+            messagebox.showwarning("Агенты", "Выберите агента")
             return
         name = self.agent_listbox.get(selection[0])
         agent = self._find_agent(name)
         if agent:
-            agent.prompt = self.prompt_text.get("1.0", tk.END).strip()
+            prompt = self.prompt_text.get("1.0", tk.END).strip()
+            if not prompt:
+                messagebox.showerror("Агенты", "Промт не может быть пустым")
+                return
+            if not messagebox.askyesno("Сохранить агента", f"Сохранить изменения для {name}?"):
+                return
+            agent.prompt = prompt
             agent.mode = self.mode_var.get()
+            self.save_agents()
             self.status_var.set(f"Настройки агента {name} сохранены")
+            messagebox.showinfo("Агенты", f"Настройки агента {name} сохранены")
 
     def save_settings(self) -> None:
         if not messagebox.askyesno("Сохранить настройки", "Сохранить ключ и порт?"):
@@ -337,6 +352,23 @@ class ControlPanel:
         path = Path("config.json")
         path.write_text(json.dumps(self.config, indent=2), encoding="utf-8")
 
+    def load_agents(self) -> None:
+        path = Path("agents.json")
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                self.agents = [AIAgent(**item) for item in data]
+                return
+            except Exception:
+                pass
+        self.agents = [AIAgent("Researcher-1"), AIAgent("Researcher-2")]
+        self.save_agents()
+
+    def save_agents(self) -> None:
+        path = Path("agents.json")
+        data = [agent.__dict__ for agent in self.agents]
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
     # ------------------------------------------------------------------
     # actions
     def add_task(
@@ -384,6 +416,7 @@ class ControlPanel:
                     task.status = "In Progress"
                     task.updated = datetime.now()
             self.refresh_table()
+            self.save_agents()
             self.status_var.set(f"Агент {name} запущен")
 
     def stop_agent(self) -> None:
@@ -396,6 +429,7 @@ class ControlPanel:
                     task.status = "Stopped"
                     task.updated = datetime.now()
             self.refresh_table()
+            self.save_agents()
             self.status_var.set(f"Агент {name} остановлен")
 
     def refresh_table(self) -> None:
