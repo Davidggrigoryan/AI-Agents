@@ -4,6 +4,7 @@ from dataclasses import dataclass
 class AIAgent:
     """Simple representation of an AI agent."""
     name: str
+    role: str = ""
     running: bool = False
     prompt: str = ""
     mode: str = "local"

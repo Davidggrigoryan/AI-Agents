@@ -29,6 +29,42 @@ class Task:
     updated: datetime = datetime.now()
 
 
+class ToolTip:
+    """Simple tooltip shown after a short delay."""
+
+    def __init__(self, widget: tk.Widget, text: str, delay: int = 3000) -> None:
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self._id: str | None = None
+        self.tip: tk.Toplevel | None = None
+        widget.bind("<Enter>", self._schedule)
+        widget.bind("<Leave>", self._unschedule)
+
+    def _schedule(self, _event: tk.Event) -> None:
+        self._unschedule()
+        self._id = self.widget.after(self.delay, self._show)
+
+    def _unschedule(self, _event: tk.Event | None = None) -> None:
+        if self._id:
+            self.widget.after_cancel(self._id)
+            self._id = None
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
+
+    def _show(self) -> None:
+        if self.tip:
+            return
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 10
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        self.tip.geometry(f"+{x}+{y}")
+        label = ttk.Label(self.tip, text=self.text, relief="solid", borderwidth=1, background="#ffffe0")
+        label.pack(ipadx=4, ipady=2)
+
+
 class ControlPanel:
     """Tkinter-based GUI emulating the provided mockup."""
 
@@ -43,12 +79,13 @@ class ControlPanel:
         # data containers
         self.tasks: list[Task] = []
         self._task_counter = 1
+        self._sort_dirs: dict[str, bool] = {}
 
         self.notebook = ttk.Notebook(master)
         self.notebook.pack(fill="both", expand=True)
 
         self.main_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.main_tab, text="Панель")
+        self.notebook.add(self.main_tab, text="Список задач")
         self._build_main_tab()
 
         self.agents_tab = ttk.Frame(self.notebook)
@@ -78,22 +115,27 @@ class ControlPanel:
         ttk.Label(task_frame, text="Заголовок").grid(row=0, column=0, sticky="w")
         self.title_entry = ttk.Entry(task_frame, width=18)
         self.title_entry.grid(row=0, column=1, padx=5, pady=2)
+        ToolTip(self.title_entry, "Введите заголовок задачи")
 
         ttk.Label(task_frame, text="Роль").grid(row=0, column=2, sticky="w")
         self.role_entry = ttk.Entry(task_frame, width=15)
         self.role_entry.grid(row=0, column=3, padx=5, pady=2)
+        ToolTip(self.role_entry, "Роль для задачи")
 
         ttk.Label(task_frame, text="Агент").grid(row=1, column=0, sticky="w")
         self.agent_combo = ttk.Combobox(task_frame, state="readonly", width=16)
         self.agent_combo.grid(row=1, column=1, padx=5, pady=2)
+        ToolTip(self.agent_combo, "Выберите агента")
 
         ttk.Label(task_frame, text="Приоритет").grid(row=1, column=2, sticky="w")
         self.prio_spin = ttk.Spinbox(task_frame, from_=1, to=10, width=5)
         self.prio_spin.set(1)
         self.prio_spin.grid(row=1, column=3, padx=5, pady=2)
+        ToolTip(self.prio_spin, "Приоритет задачи")
 
         add_task = ttk.Button(task_frame, text="Добавить задачу", command=self.add_task)
         add_task.grid(row=2, column=0, columnspan=4, pady=5)
+        ToolTip(add_task, "Добавить задачу в список")
 
         # ----- agent control -----
         agent_frame = ttk.LabelFrame(top_frame, text="Agent")
@@ -102,17 +144,15 @@ class ControlPanel:
         ttk.Label(agent_frame, text="Имя").grid(row=0, column=0, sticky="w")
         self.agent_select = ttk.Combobox(agent_frame, state="readonly", width=14)
         self.agent_select.grid(row=0, column=1, padx=5, pady=2)
-
-        ttk.Label(agent_frame, text="Count").grid(row=1, column=0, sticky="w")
-        self.count_spin = ttk.Spinbox(agent_frame, from_=1, to=5, width=5)
-        self.count_spin.set(1)
-        self.count_spin.grid(row=1, column=1, padx=5, pady=2)
+        ToolTip(self.agent_select, "Выберите агента")
 
         start_btn = ttk.Button(agent_frame, text="Старт", command=self.start_agent)
-        start_btn.grid(row=2, column=0, padx=5, pady=(5, 0), sticky="ew")
+        start_btn.grid(row=1, column=0, padx=5, pady=(5, 0), sticky="ew")
+        ToolTip(start_btn, "Запустить агента")
 
         stop_btn = ttk.Button(agent_frame, text="Стоп выбранный", command=self.stop_agent)
-        stop_btn.grid(row=2, column=1, padx=5, pady=(5, 0), sticky="ew")
+        stop_btn.grid(row=1, column=1, padx=5, pady=(5, 0), sticky="ew")
+        ToolTip(stop_btn, "Остановить выбранного агента")
 
         # ----- task table -----
         columns = (
@@ -141,13 +181,17 @@ class ControlPanel:
             "start": "Старт",
         }
         for cid, text in headings.items():
-            self.tree.heading(cid, text=text)
+            self.tree.heading(cid, text=text, command=lambda c=cid: self.sort_tasks(c))
             self.tree.column(cid, width=80, anchor="center")
         self.tree.column("title", width=150)
         self.tree.column("role", width=120)
         self.tree.column("agent", width=120)
         self.tree.column("updated", width=110)
         self.tree.column("start", width=80)
+
+        del_btn = ttk.Button(self.main_tab, text="Удалить выбранное", command=self.delete_task)
+        del_btn.pack(padx=10, pady=(0, 10), anchor="e")
+        ToolTip(del_btn, "Удалить выбранные задачи")
 
         # ----- status bar -----
         self.status_var = tk.StringVar(value="Готово")
@@ -171,13 +215,19 @@ class ControlPanel:
         ttk.Label(manage_frame, text="Имя").grid(row=0, column=0, sticky="w")
         self.new_agent_entry = ttk.Entry(manage_frame, width=20)
         self.new_agent_entry.grid(row=0, column=1, padx=5, pady=2)
+        ToolTip(self.new_agent_entry, "Имя нового агента")
         ttk.Button(manage_frame, text="Добавить", command=self.create_agent).grid(row=0, column=2, padx=5)
 
+        ttk.Label(manage_frame, text="Роль").grid(row=1, column=0, sticky="w")
+        self.agent_role_entry = ttk.Entry(manage_frame, width=20)
+        self.agent_role_entry.grid(row=1, column=1, padx=5, pady=2)
+        ToolTip(self.agent_role_entry, "Роль агента")
         ttk.Button(manage_frame, text="Удалить", command=self.delete_agent).grid(row=1, column=2, padx=5, pady=2)
 
         ttk.Label(manage_frame, text="Промт").grid(row=2, column=0, sticky="nw")
         self.prompt_text = tk.Text(manage_frame, width=40, height=5)
         self.prompt_text.grid(row=2, column=1, columnspan=2, padx=5, pady=5, sticky="ew")
+        ToolTip(self.prompt_text, "Промт для агента")
 
         self.mode_var = tk.StringVar(value="local")
         mode_frame = ttk.Frame(manage_frame)
@@ -185,7 +235,9 @@ class ControlPanel:
         ttk.Radiobutton(mode_frame, text="Локальный", variable=self.mode_var, value="local").pack(side="left")
         ttk.Radiobutton(mode_frame, text="Облачный", variable=self.mode_var, value="cloud").pack(side="left")
 
-        ttk.Button(manage_frame, text="Сохранить", command=self.save_agent_settings).grid(row=4, column=1, pady=5, sticky="w")
+        save_btn = ttk.Button(manage_frame, text="Сохранить", command=self.save_agent_settings)
+        save_btn.grid(row=4, column=1, pady=5, sticky="w")
+        ToolTip(save_btn, "Сохранить настройки агента")
 
     def _build_settings_tab(self) -> None:
         frame = ttk.Frame(self.settings_tab)
@@ -195,10 +247,14 @@ class ControlPanel:
         self.api_key_var = tk.StringVar(value=self.config.get("openai_key", ""))
         self.api_key_entry = ttk.Entry(frame, textvariable=self.api_key_var, width=40, show="*")
         self.api_key_entry.grid(row=0, column=1, padx=5, pady=2, sticky="w")
+        ToolTip(self.api_key_entry, "OpenAI API ключ")
         self.show_key = False
         self.show_btn = ttk.Button(frame, text="Показать", command=self.toggle_key_visibility)
         self.show_btn.grid(row=0, column=2, padx=5)
-        ttk.Button(frame, text="Удалить ключ", command=self.delete_key).grid(row=0, column=3, padx=5)
+        paste_btn = ttk.Button(frame, text="Вставить", command=self.paste_key)
+        paste_btn.grid(row=0, column=3, padx=5)
+        ToolTip(paste_btn, "Вставить ключ из буфера")
+        ttk.Button(frame, text="Удалить ключ", command=self.delete_key).grid(row=0, column=4, padx=5)
 
         ttk.Label(frame, text="Ollama порт").grid(row=1, column=0, sticky="w")
         self.ollama_port_var = tk.StringVar(value=str(self.config.get("ollama_port", "")))
@@ -244,10 +300,12 @@ class ControlPanel:
 
     def create_agent(self) -> None:
         name = self.new_agent_entry.get().strip()
+        role = self.agent_role_entry.get().strip()
         if not name:
             return
-        self.agents.append(AIAgent(name))
+        self.agents.append(AIAgent(name, role=role))
         self.new_agent_entry.delete(0, tk.END)
+        self.agent_role_entry.delete(0, tk.END)
         self._refresh_agent_lists()
         self.save_agents()
         self.status_var.set(f"Агент {name} создан")
@@ -279,6 +337,8 @@ class ControlPanel:
             self.prompt_text.delete("1.0", tk.END)
             self.prompt_text.insert("1.0", agent.prompt)
             self.mode_var.set(agent.mode)
+            self.agent_role_entry.delete(0, tk.END)
+            self.agent_role_entry.insert(0, agent.role)
 
     def save_agent_settings(self) -> None:
         selection = self.agent_listbox.curselection()
@@ -295,8 +355,10 @@ class ControlPanel:
             if not messagebox.askyesno("Сохранить агента", f"Сохранить изменения для {name}?"):
                 return
             agent.prompt = prompt
+            agent.role = self.agent_role_entry.get().strip()
             agent.mode = self.mode_var.get()
             self.save_agents()
+            self._refresh_agent_lists()
             self.status_var.set(f"Настройки агента {name} сохранены")
             messagebox.showinfo("Агенты", f"Настройки агента {name} сохранены")
 
@@ -328,6 +390,14 @@ class ControlPanel:
         self.save_config()
         self.status_var.set("Ключ удален")
         messagebox.showinfo("Настройки", "Ключ удален")
+
+    def paste_key(self) -> None:
+        try:
+            key = self.master.clipboard_get().strip()
+        except tk.TclError:
+            messagebox.showerror("Настройки", "Буфер обмена пуст")
+            return
+        self.api_key_var.set(key)
 
     def toggle_key_visibility(self) -> None:
         self.show_key = not self.show_key
@@ -431,6 +501,35 @@ class ControlPanel:
             self.refresh_table()
             self.save_agents()
             self.status_var.set(f"Агент {name} остановлен")
+
+    def delete_task(self) -> None:
+        selected = self.tree.selection()
+        if not selected:
+            return
+        if not messagebox.askyesno("Удалить задачу", "Удалить выбранные задачи?"):
+            return
+        ids = {int(self.tree.item(item, "values")[0]) for item in selected}
+        self.tasks = [t for t in self.tasks if t.id not in ids]
+        self.refresh_table()
+        self.status_var.set("Задача удалена")
+
+    def sort_tasks(self, column: str) -> None:
+        mapping = {
+            "id": "id",
+            "title": "title",
+            "role": "role",
+            "agent": "agent",
+            "cpu": "cpu",
+            "ram": "ram",
+            "status": "status",
+            "updated": "updated",
+            "start": "created",
+        }
+        attr = mapping[column]
+        reverse = self._sort_dirs.get(column, False)
+        self.tasks.sort(key=lambda t: getattr(t, attr), reverse=reverse)
+        self._sort_dirs[column] = not reverse
+        self.refresh_table()
 
     def refresh_table(self) -> None:
         self.tree.delete(*self.tree.get_children())

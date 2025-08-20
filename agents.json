@@ -1,12 +1,14 @@
 [
   {
     "name": "Researcher-1",
+    "role": "",
     "running": false,
     "prompt": "",
     "mode": "local"
   },
   {
     "name": "Researcher-2",
+    "role": "",
     "running": false,
     "prompt": "",
     "mode": "local"
