@@ -5,6 +5,8 @@ class AIAgent:
     """Simple representation of an AI agent."""
     name: str
     running: bool = False
+    prompt: str = ""
+    mode: str = "local"
 
     def start(self) -> None:
         """Mark the agent as running."""

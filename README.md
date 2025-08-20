@@ -3,6 +3,13 @@
 This project provides a Tkinter-based control panel to manage simple AI agents
 and their tasks.
 
+The interface includes tabs for managing agents and application settings:
+
+- **Agents** – create or delete agents, set a prompt for their behavior, and
+  choose between cloud (OpenAI API) or local (Ollama) execution.
+- **Settings** – enter and persist an OpenAI API key and configure the port used
+  for a local Ollama instance.
+
 ## Usage
 
 You can run the control panel by double-clicking the provided script for your
