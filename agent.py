@@ -17,4 +17,4 @@ class AIAgent:
     @property
     def status(self) -> str:
         """Return the current status of the agent."""
-        return "running" if self.running else "stopped"
+        return "работает" if self.running else "остановлен"

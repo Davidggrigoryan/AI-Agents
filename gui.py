@@ -8,13 +8,13 @@ class AgentGUI:
 
     def __init__(self, master: tk.Tk):
         self.master = master
-        self.master.title("AI Agent Manager")
+        self.master.title("Менеджер ИИ-агентов")
         self.agents: list[AIAgent] = []
 
         self.name_entry = tk.Entry(master)
         self.name_entry.pack(padx=5, pady=5)
 
-        add_button = tk.Button(master, text="Add Agent", command=self.add_agent)
+        add_button = tk.Button(master, text="Добавить агента", command=self.add_agent)
         add_button.pack(padx=5, pady=5)
 
         self.listbox = tk.Listbox(master, width=40)
@@ -23,19 +23,19 @@ class AgentGUI:
         btn_frame = tk.Frame(master)
         btn_frame.pack(padx=5, pady=5)
 
-        start_button = tk.Button(btn_frame, text="Start", command=self.start_agent)
+        start_button = tk.Button(btn_frame, text="Запустить", command=self.start_agent)
         start_button.grid(row=0, column=0, padx=2)
 
-        stop_button = tk.Button(btn_frame, text="Stop", command=self.stop_agent)
+        stop_button = tk.Button(btn_frame, text="Остановить", command=self.stop_agent)
         stop_button.grid(row=0, column=1, padx=2)
 
-        remove_button = tk.Button(btn_frame, text="Remove", command=self.remove_agent)
+        remove_button = tk.Button(btn_frame, text="Удалить", command=self.remove_agent)
         remove_button.grid(row=0, column=2, padx=2)
 
     def add_agent(self) -> None:
         name = self.name_entry.get().strip()
         if not name:
-            messagebox.showwarning("Input Error", "Agent name cannot be empty")
+            messagebox.showwarning("Ошибка ввода", "Имя агента не может быть пустым")
             return
         agent = AIAgent(name)
         self.agents.append(agent)
@@ -45,7 +45,7 @@ class AgentGUI:
     def get_selected_agent(self) -> AIAgent | None:
         index = self.listbox.curselection()
         if not index:
-            messagebox.showwarning("Selection Error", "No agent selected")
+            messagebox.showwarning("Ошибка выбора", "Агент не выбран")
             return None
         return self.agents[index[0]]
 
@@ -64,7 +64,7 @@ class AgentGUI:
     def remove_agent(self) -> None:
         index = self.listbox.curselection()
         if not index:
-            messagebox.showwarning("Selection Error", "No agent selected")
+            messagebox.showwarning("Ошибка выбора", "Агент не выбран")
             return
         self.agents.pop(index[0])
         self.refresh_list()
