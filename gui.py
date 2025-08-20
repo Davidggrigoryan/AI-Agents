@@ -192,7 +192,10 @@ class ControlPanel:
         ttk.Label(frame, text="OpenAI API Key").grid(row=0, column=0, sticky="w")
         self.api_key_var = tk.StringVar(value=self.config.get("openai_key", ""))
         self.api_key_entry = ttk.Entry(frame, textvariable=self.api_key_var, width=40, show="*")
-        self.api_key_entry.grid(row=0, column=1, padx=5, pady=2, columnspan=2, sticky="w")
+        self.api_key_entry.grid(row=0, column=1, padx=5, pady=2, sticky="w")
+        self.show_key = False
+        self.show_btn = ttk.Button(frame, text="Показать", command=self.toggle_key_visibility)
+        self.show_btn.grid(row=0, column=2, padx=5)
         ttk.Button(frame, text="Удалить ключ", command=self.delete_key).grid(row=0, column=3, padx=5)
 
         ttk.Label(frame, text="Ollama порт").grid(row=1, column=0, sticky="w")
@@ -274,16 +277,31 @@ class ControlPanel:
             self.status_var.set(f"Настройки агента {name} сохранены")
 
     def save_settings(self) -> None:
+        if not messagebox.askyesno("Сохранить настройки", "Сохранить ключ и порт?"):
+            return
         self.config["openai_key"] = self.api_key_var.get().strip()
         self.config["ollama_port"] = self.ollama_port_var.get().strip()
         self.save_config()
         self.status_var.set("Настройки сохранены")
+        messagebox.showinfo("Настройки", "Настройки сохранены")
 
     def delete_key(self) -> None:
+        if not messagebox.askyesno("Удалить ключ", "Удалить API ключ?"):
+            return
         self.api_key_var.set("")
         self.config["openai_key"] = ""
         self.save_config()
         self.status_var.set("Ключ удален")
+        messagebox.showinfo("Настройки", "Ключ удален")
+
+    def toggle_key_visibility(self) -> None:
+        self.show_key = not self.show_key
+        if self.show_key:
+            self.api_key_entry.config(show="")
+            self.show_btn.config(text="Скрыть")
+        else:
+            self.api_key_entry.config(show="*")
+            self.show_btn.config(text="Показать")
 
     def load_config(self) -> None:
         path = Path("config.json")
