@@ -31,4 +31,5 @@ agents. The layout roughly follows the provided mock‑up.
 
 To start a local Ollama server outside of the GUI, run `run_ollama.sh` on
 Linux/macOS or `run_ollama.bat` on Windows. The Settings tab also has a
-"Запустить Ollama" button that triggers the same script.
+"Запустить Ollama" button that triggers the same script and waits until the
+server responds.

@@ -9,6 +9,9 @@ import json
 import os
 import re
 import subprocess
+import threading
+import time
+import urllib.request
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -465,17 +468,36 @@ class ControlPanel:
         messagebox.showinfo("Настройки", "Настройки сохранены")
 
     def start_ollama(self) -> None:
-        """Launch the Ollama server using a helper script."""
+        """Launch the Ollama server using a helper script and wait for readiness."""
         port = self.ollama_port_var.get().strip() or "11434"
         script = "run_ollama.bat" if os.name == "nt" else "run_ollama.sh"
         path = Path(__file__).with_name(script)
         try:
             if os.name == "nt":
-                subprocess.Popen(["cmd", "/c", str(path), port])
+                proc = subprocess.run(["cmd", "/c", str(path), port], capture_output=True, text=True)
             else:
-                subprocess.Popen([str(path), port])
+                proc = subprocess.run([str(path), port], capture_output=True, text=True)
+            if proc.returncode != 0:
+                msg = proc.stderr.strip() or proc.stdout.strip() or "Неизвестная ошибка"
+                self.status_var.set("Ошибка запуска Ollama")
+                messagebox.showerror("Ollama", f"Не удалось запустить сервер: {msg}")
+                return
             self.status_var.set("Ollama сервер запускается")
-            messagebox.showinfo("Ollama", "Сервер Ollama запускается")
+
+            def _wait_ready() -> None:
+                url = f"http://127.0.0.1:{port}/"
+                for _ in range(20):
+                    try:
+                        with urllib.request.urlopen(url, timeout=1):
+                            self.status_var.set("Ollama сервер запущен")
+                            self.master.after(0, lambda: messagebox.showinfo("Ollama", "Сервер Ollama запущен"))
+                            return
+                    except Exception:
+                        time.sleep(0.5)
+                self.status_var.set("Ollama не отвечает")
+                self.master.after(0, lambda: messagebox.showerror("Ollama", "Сервер Ollama не ответил"))
+
+            threading.Thread(target=_wait_ready, daemon=True).start()
         except Exception as exc:
             messagebox.showerror("Ollama", f"Не удалось запустить сервер: {exc}")
 
