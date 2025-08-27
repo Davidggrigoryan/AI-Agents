@@ -9,8 +9,8 @@ The interface includes tabs for managing agents and application settings:
   between cloud (OpenAI API) or local (Ollama) execution, and persist agent
   changes in `agents.json`.
 - **Settings** – enter and persist an OpenAI API key and configure the port used
-  for a local Ollama instance. A dedicated button can launch the Ollama server
-  using the bundled scripts.
+  for a local Ollama instance. Dedicated buttons can launch and stop the Ollama
+  server using the bundled scripts.
 
 ## Usage
 
@@ -30,6 +30,6 @@ The window allows you to create tasks, assign them to agents, and start or stop
 agents. The layout roughly follows the provided mock‑up.
 
 To start a local Ollama server outside of the GUI, run `run_ollama.sh` on
-Linux/macOS or `run_ollama.bat` on Windows. The Settings tab also has a
-"Запустить Ollama" button that triggers the same script and waits until the
-server responds.
+Linux/macOS or `run_ollama.bat` on Windows. The Settings tab also has
+"Запустить Ollama" and "Остановить Ollama" buttons that trigger the respective
+commands and update the status bar once the server responds.

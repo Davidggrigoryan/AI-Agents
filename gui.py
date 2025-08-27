@@ -320,6 +320,7 @@ class ControlPanel:
         self.ollama_port_var = tk.StringVar(value=str(self.config.get("ollama_port", "")))
         ttk.Entry(frame, textvariable=self.ollama_port_var, width=10).grid(row=1, column=1, padx=5, pady=2, sticky="w")
         ttk.Button(frame, text="Запустить Ollama", command=self.start_ollama).grid(row=1, column=2, padx=5, pady=2)
+        ttk.Button(frame, text="Остановить Ollama", command=self.stop_ollama).grid(row=1, column=3, padx=5, pady=2)
 
         ttk.Button(frame, text="Сохранить", command=self.save_settings).grid(row=2, column=1, pady=5, sticky="w")
 
@@ -472,6 +473,7 @@ class ControlPanel:
         port = self.ollama_port_var.get().strip() or "11434"
         script = "run_ollama.bat" if os.name == "nt" else "run_ollama.sh"
         path = Path(__file__).with_name(script)
+        self.status_var.set("Запуск Ollama...")
         try:
             if os.name == "nt":
                 proc = subprocess.run(["cmd", "/c", str(path), port], capture_output=True, text=True)
@@ -499,7 +501,27 @@ class ControlPanel:
 
             threading.Thread(target=_wait_ready, daemon=True).start()
         except Exception as exc:
+            self.status_var.set("Ошибка запуска Ollama")
             messagebox.showerror("Ollama", f"Не удалось запустить сервер: {exc}")
+
+    def stop_ollama(self) -> None:
+        """Stop the Ollama server process."""
+        self.status_var.set("Остановка Ollama...")
+        try:
+            if os.name == "nt":
+                proc = subprocess.run(["taskkill", "/f", "/im", "ollama.exe"], capture_output=True, text=True)
+            else:
+                proc = subprocess.run(["pkill", "-f", "ollama serve"], capture_output=True, text=True)
+            if proc.returncode != 0:
+                msg = proc.stderr.strip() or proc.stdout.strip() or "Неизвестная ошибка"
+                self.status_var.set("Ошибка остановки Ollama")
+                messagebox.showerror("Ollama", f"Не удалось остановить сервер: {msg}")
+                return
+            self.status_var.set("Ollama сервер остановлен")
+            messagebox.showinfo("Ollama", "Сервер Ollama остановлен")
+        except Exception as exc:
+            self.status_var.set("Ошибка остановки Ollama")
+            messagebox.showerror("Ollama", f"Не удалось остановить сервер: {exc}")
 
     def delete_key(self) -> None:
         if not messagebox.askyesno("Удалить ключ", "Удалить API ключ?"):
