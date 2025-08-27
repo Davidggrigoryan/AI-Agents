@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
+import os
 import re
+import subprocess
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -314,6 +316,7 @@ class ControlPanel:
         ttk.Label(frame, text="Ollama порт").grid(row=1, column=0, sticky="w")
         self.ollama_port_var = tk.StringVar(value=str(self.config.get("ollama_port", "")))
         ttk.Entry(frame, textvariable=self.ollama_port_var, width=10).grid(row=1, column=1, padx=5, pady=2, sticky="w")
+        ttk.Button(frame, text="Запустить Ollama", command=self.start_ollama).grid(row=1, column=2, padx=5, pady=2)
 
         ttk.Button(frame, text="Сохранить", command=self.save_settings).grid(row=2, column=1, pady=5, sticky="w")
 
@@ -460,6 +463,21 @@ class ControlPanel:
         self.save_config()
         self.status_var.set("Настройки сохранены")
         messagebox.showinfo("Настройки", "Настройки сохранены")
+
+    def start_ollama(self) -> None:
+        """Launch the Ollama server using a helper script."""
+        port = self.ollama_port_var.get().strip() or "11434"
+        script = "run_ollama.bat" if os.name == "nt" else "run_ollama.sh"
+        path = Path(__file__).with_name(script)
+        try:
+            if os.name == "nt":
+                subprocess.Popen(["cmd", "/c", str(path), port])
+            else:
+                subprocess.Popen([str(path), port])
+            self.status_var.set("Ollama сервер запускается")
+            messagebox.showinfo("Ollama", "Сервер Ollama запускается")
+        except Exception as exc:
+            messagebox.showerror("Ollama", f"Не удалось запустить сервер: {exc}")
 
     def delete_key(self) -> None:
         if not messagebox.askyesno("Удалить ключ", "Удалить API ключ?"):
