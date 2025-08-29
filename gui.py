@@ -298,7 +298,15 @@ class ControlPanel:
 
         ttk.Label(input_frame, text="Модель").pack(side="left")
         self.chat_model_var = tk.StringVar(value=self.config.get("ollama_model", "llama2"))
-        ttk.Entry(input_frame, textvariable=self.chat_model_var, width=15).pack(side="left", padx=5)
+        self.chat_model_combo = ttk.Combobox(
+            input_frame,
+            textvariable=self.chat_model_var,
+            width=15,
+            state="readonly",
+        )
+        self.chat_model_combo.pack(side="left", padx=5)
+        self.chat_model_combo.bind("<Button-1>", lambda _e: self.refresh_ollama_models())
+        self.refresh_ollama_models()
 
         self.chat_entry = tk.Text(input_frame, height=3)
         self.chat_entry.pack(side="left", fill="x", expand=True, padx=5)
@@ -350,6 +358,24 @@ class ControlPanel:
             reply = f"Ошибка: {exc}"
         self.chat_messages.append({"role": "assistant", "content": reply})
         self.master.after(0, lambda: self.append_chat(f"Ollama: {reply}"))
+
+    def refresh_ollama_models(self) -> None:
+        """Fetch installed Ollama models and update the combo box."""
+        port = self.ollama_port_var.get().strip() or "11434"
+        url = f"http://127.0.0.1:{port}/api/tags"
+        try:
+            with urllib.request.urlopen(url) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                models = [m.get("name") for m in data.get("models", [])]
+        except Exception:
+            models = []
+        if not models:
+            current = self.chat_model_var.get().strip()
+            if current:
+                models = [current]
+        self.chat_model_combo["values"] = models
+        if models and self.chat_model_var.get() not in models:
+            self.chat_model_var.set(models[0])
 
     def _build_settings_tab(self) -> None:
         frame = ttk.Frame(self.settings_tab)
@@ -580,6 +606,7 @@ class ControlPanel:
                 self.status_var.set("Ollama сервер уже запущен")
                 self.ollama_status_var.set("Ollama сервер запущен")
                 self.append_ollama_log("Сервер уже запущен")
+                self.refresh_ollama_models()
                 messagebox.showinfo("Ollama", "Сервер Ollama уже запущен")
                 return
         except Exception:
@@ -613,6 +640,7 @@ class ControlPanel:
                             with urllib.request.urlopen(url, timeout=1):
                                 self.master.after(0, lambda: self.status_var.set("Ollama сервер запущен"))
                                 self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер запущен"))
+                                self.master.after(0, self.refresh_ollama_models)
                                 self.master.after(0, lambda: messagebox.showinfo("Ollama", "Сервер Ollama запущен"))
                                 return
                         except Exception:
