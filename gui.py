@@ -12,6 +12,7 @@ import subprocess
 import threading
 import time
 import urllib.request
+import urllib.error
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -323,13 +324,28 @@ class ControlPanel:
     def _chat_request(self) -> None:
         port = self.ollama_port_var.get().strip() or "11434"
         model = self.chat_model_var.get().strip() or "llama2"
-        url = f"http://127.0.0.1:{port}/api/chat"
-        data = json.dumps({"model": model, "messages": self.chat_messages, "stream": False}).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        base = f"http://127.0.0.1:{port}"
+        headers = {"Content-Type": "application/json"}
+        payload = json.dumps({"model": model, "messages": self.chat_messages, "stream": False}).encode("utf-8")
+        req = urllib.request.Request(f"{base}/api/chat", data=payload, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req) as resp:
                 resp_data = json.loads(resp.read().decode("utf-8"))
                 reply = resp_data.get("message", {}).get("content", "")
+        except urllib.error.HTTPError as err:
+            if err.code == 404:
+                # Fallback for older Ollama versions without /api/chat
+                prompt = "\n".join(f"{m['role']}: {m['content']}" for m in self.chat_messages)
+                payload = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode("utf-8")
+                alt_req = urllib.request.Request(f"{base}/api/generate", data=payload, headers=headers, method="POST")
+                try:
+                    with urllib.request.urlopen(alt_req) as resp:
+                        resp_data = json.loads(resp.read().decode("utf-8"))
+                        reply = resp_data.get("response", "")
+                except Exception as exc:
+                    reply = f"Ошибка: {exc}"
+            else:
+                reply = f"Ошибка: {err}"
         except Exception as exc:
             reply = f"Ошибка: {exc}"
         self.chat_messages.append({"role": "assistant", "content": reply})
