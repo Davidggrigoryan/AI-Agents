@@ -319,11 +319,16 @@ class ControlPanel:
         ttk.Label(frame, text="Ollama порт").grid(row=1, column=0, sticky="w")
         self.ollama_port_var = tk.StringVar(value=str(self.config.get("ollama_port", "")))
         ttk.Entry(frame, textvariable=self.ollama_port_var, width=10).grid(row=1, column=1, padx=5, pady=2, sticky="w")
-        ttk.Button(frame, text="Запустить Ollama", command=self.start_ollama).grid(row=1, column=2, padx=5, pady=2)
-        ttk.Button(frame, text="Остановить Ollama", command=self.stop_ollama).grid(row=1, column=3, padx=5, pady=2)
 
-        status_frame = ttk.LabelFrame(frame, text="Статус Ollama")
-        status_frame.grid(row=2, column=0, columnspan=6, pady=10, sticky="ew")
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=1, column=2, columnspan=2, padx=5, pady=2, sticky="w")
+        btn_frame.grid_columnconfigure(0, weight=1)
+        btn_frame.grid_columnconfigure(1, weight=1)
+        ttk.Button(btn_frame, text="Запустить Ollama", command=self.start_ollama).grid(row=0, column=0, padx=5, pady=2)
+        ttk.Button(btn_frame, text="Остановить Ollama", command=self.stop_ollama).grid(row=0, column=1, padx=5, pady=2)
+
+        status_frame = ttk.LabelFrame(btn_frame, text="Статус Ollama")
+        status_frame.grid(row=1, column=0, columnspan=2, pady=(5, 0), sticky="ew")
         self.ollama_status_var = tk.StringVar(value="Ollama сервер отключен")
         ttk.Label(status_frame, textvariable=self.ollama_status_var).pack(anchor="w", padx=5, pady=5)
         self.ollama_log = tk.Text(status_frame, width=70, height=6, state="disabled")
@@ -477,8 +482,11 @@ class ControlPanel:
 
     def append_ollama_log(self, text: str) -> None:
         """Append a line from the Ollama process to the log output."""
+        clean = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text).strip()
+        if not clean:
+            return
         self.ollama_log.config(state="normal")
-        self.ollama_log.insert(tk.END, text + "\n")
+        self.ollama_log.insert(tk.END, clean + "\n")
         self.ollama_log.see(tk.END)
         self.ollama_log.config(state="disabled")
 
@@ -496,14 +504,15 @@ class ControlPanel:
         def _run() -> None:
             try:
                 if os.name == "nt":
-                    proc = subprocess.Popen(["cmd", "/c", str(path), port], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    proc = subprocess.Popen(["cmd", "/c", str(path), port], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="ignore")
                 else:
-                    proc = subprocess.Popen([str(path), port], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    proc = subprocess.Popen([str(path), port], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="ignore")
                 output: list[str] = []
                 if proc.stdout:
                     for line in proc.stdout:
-                        output.append(line)
-                        self.master.after(0, lambda line=line: self.append_ollama_log(line.rstrip()))
+                        clean = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line).rstrip()
+                        output.append(clean)
+                        self.master.after(0, lambda line=clean: self.append_ollama_log(line))
                 ret = proc.wait()
                 if ret != 0:
                     msg = "".join(output).strip() or "Неизвестная ошибка"
@@ -516,7 +525,7 @@ class ControlPanel:
 
                 def _wait_ready() -> None:
                     url = f"http://127.0.0.1:{port}/"
-                    for _ in range(20):
+                    for _ in range(60):
                         try:
                             with urllib.request.urlopen(url, timeout=1):
                                 self.master.after(0, lambda: self.status_var.set("Ollama сервер запущен"))
@@ -524,7 +533,7 @@ class ControlPanel:
                                 self.master.after(0, lambda: messagebox.showinfo("Ollama", "Сервер Ollama запущен"))
                                 return
                         except Exception:
-                            time.sleep(0.5)
+                            time.sleep(1)
                     self.master.after(0, lambda: self.status_var.set("Ollama не отвечает"))
                     self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер не запустился"))
                     self.master.after(0, lambda: messagebox.showerror("Ollama", "Сервер Ollama не ответил"))
@@ -546,14 +555,13 @@ class ControlPanel:
         def _run() -> None:
             try:
                 if os.name == "nt":
-                    proc = subprocess.Popen(["taskkill", "/f", "/im", "ollama.exe"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    proc = subprocess.Popen(["taskkill", "/f", "/im", "ollama.exe"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="ignore")
                 else:
-                    proc = subprocess.Popen(["pkill", "-f", "ollama serve"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    proc = subprocess.Popen(["pkill", "-f", "ollama serve"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="ignore")
                 output: list[str] = []
                 if proc.stdout:
                     for line in proc.stdout:
-                        output.append(line)
-                        self.master.after(0, lambda line=line: self.append_ollama_log(line.rstrip()))
+                        output.append(re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line))
                 ret = proc.wait()
                 if ret != 0:
                     msg = "".join(output).strip() or "Неизвестная ошибка"
