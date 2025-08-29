@@ -84,6 +84,7 @@ class ControlPanel:
         self.master.title("Agents – Control Panel")
 
         self.load_config()
+        self.ollama_port_var = tk.StringVar(value=str(self.config.get("ollama_port", "")))
         self.agents: list[AIAgent] = []
         self.load_agents()
 
@@ -414,7 +415,6 @@ class ControlPanel:
         self.update_key_info()
 
         ttk.Label(frame, text="Ollama порт").grid(row=1, column=0, sticky="w")
-        self.ollama_port_var = tk.StringVar(value=str(self.config.get("ollama_port", "")))
         ttk.Entry(frame, textvariable=self.ollama_port_var, width=10).grid(row=1, column=1, padx=5, pady=2, sticky="w")
 
         btn_frame = ttk.Frame(frame)
