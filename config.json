@@ -1,4 +1,5 @@
 {
   "openai_key": "",
-  "ollama_port": "11434"
+  "ollama_port": "11434",
+  "ollama_model": "llama2"
 }
