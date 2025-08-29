@@ -91,6 +91,7 @@ class ControlPanel:
         self._task_counter = 1
         self._sort_dirs: dict[str, bool] = {}
         self.editing_task: Task | None = None
+        self.chat_messages: list[dict[str, str]] = []
 
         self.notebook = ttk.Notebook(master)
         self.notebook.pack(fill="both", expand=True)
@@ -106,6 +107,10 @@ class ControlPanel:
         self.agents_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.agents_tab, text="Агенты")
         self._build_agents_tab()
+
+        self.chat_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.chat_tab, text="Чат")
+        self._build_chat_tab()
 
         self.settings_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.settings_tab, text="Настройки")
@@ -279,6 +284,56 @@ class ControlPanel:
         save_btn = ttk.Button(manage_frame, text="Сохранить", command=self.save_agent_settings)
         save_btn.grid(row=4, column=1, pady=5, sticky="w")
         ToolTip(save_btn, "Сохранить настройки агента")
+
+    def _build_chat_tab(self) -> None:
+        frame = ttk.Frame(self.chat_tab)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self.chat_history = tk.Text(frame, state="disabled", width=60, height=15, wrap="word")
+        self.chat_history.pack(fill="both", expand=True)
+
+        input_frame = ttk.Frame(frame)
+        input_frame.pack(fill="x", pady=(5, 0))
+
+        ttk.Label(input_frame, text="Модель").pack(side="left")
+        self.chat_model_var = tk.StringVar(value=self.config.get("ollama_model", "llama2"))
+        ttk.Entry(input_frame, textvariable=self.chat_model_var, width=15).pack(side="left", padx=5)
+
+        self.chat_entry = tk.Text(input_frame, height=3)
+        self.chat_entry.pack(side="left", fill="x", expand=True, padx=5)
+
+        send_btn = ttk.Button(input_frame, text="Отправить", command=self.send_chat)
+        send_btn.pack(side="left")
+
+    def append_chat(self, text: str) -> None:
+        self.chat_history.config(state="normal")
+        self.chat_history.insert(tk.END, text + "\n")
+        self.chat_history.see(tk.END)
+        self.chat_history.config(state="disabled")
+
+    def send_chat(self) -> None:
+        message = self.chat_entry.get("1.0", tk.END).strip()
+        if not message:
+            return
+        self.chat_entry.delete("1.0", tk.END)
+        self.append_chat(f"Вы: {message}")
+        self.chat_messages.append({"role": "user", "content": message})
+        threading.Thread(target=self._chat_request, daemon=True).start()
+
+    def _chat_request(self) -> None:
+        port = self.ollama_port_var.get().strip() or "11434"
+        model = self.chat_model_var.get().strip() or "llama2"
+        url = f"http://127.0.0.1:{port}/api/chat"
+        data = json.dumps({"model": model, "messages": self.chat_messages, "stream": False}).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req) as resp:
+                resp_data = json.loads(resp.read().decode("utf-8"))
+                reply = resp_data.get("message", {}).get("content", "")
+        except Exception as exc:
+            reply = f"Ошибка: {exc}"
+        self.chat_messages.append({"role": "assistant", "content": reply})
+        self.master.after(0, lambda: self.append_chat(f"Ollama: {reply}"))
 
     def _build_settings_tab(self) -> None:
         frame = ttk.Frame(self.settings_tab)
@@ -461,10 +516,11 @@ class ControlPanel:
             messagebox.showinfo("Агенты", f"Настройки агента {name} сохранены")
 
     def save_settings(self) -> None:
-        if not messagebox.askyesno("Сохранить настройки", "Сохранить ключ и порт?"):
+        if not messagebox.askyesno("Сохранить настройки", "Сохранить ключ, порт и модель?"):
             return
         key = self.api_key_var.get().strip()
         port = self.ollama_port_var.get().strip()
+        model = self.chat_model_var.get().strip()
 
         if key and not self._valid_api_key(key):
             messagebox.showerror("Настройки", "Некорректный OpenAI API ключ")
@@ -476,6 +532,7 @@ class ControlPanel:
 
         self.config["openai_key"] = key
         self.config["ollama_port"] = port
+        self.config["ollama_model"] = model or self.config.get("ollama_model", "llama2")
         self.save_config()
         self.status_var.set("Настройки сохранены")
         messagebox.showinfo("Настройки", "Настройки сохранены")
@@ -625,9 +682,10 @@ class ControlPanel:
             try:
                 self.config = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
-                self.config = {"openai_key": "", "ollama_port": "11434"}
+                self.config = {"openai_key": "", "ollama_port": "11434", "ollama_model": "llama2"}
         else:
-            self.config = {"openai_key": "", "ollama_port": "11434"}
+            self.config = {"openai_key": "", "ollama_port": "11434", "ollama_model": "llama2"}
+        self.config.setdefault("ollama_model", "llama2")
 
     def save_config(self) -> None:
         path = Path("config.json")
