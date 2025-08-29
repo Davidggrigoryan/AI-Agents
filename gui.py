@@ -322,7 +322,14 @@ class ControlPanel:
         ttk.Button(frame, text="Запустить Ollama", command=self.start_ollama).grid(row=1, column=2, padx=5, pady=2)
         ttk.Button(frame, text="Остановить Ollama", command=self.stop_ollama).grid(row=1, column=3, padx=5, pady=2)
 
-        ttk.Button(frame, text="Сохранить", command=self.save_settings).grid(row=2, column=1, pady=5, sticky="w")
+        status_frame = ttk.LabelFrame(frame, text="Статус Ollama")
+        status_frame.grid(row=2, column=0, columnspan=6, pady=10, sticky="ew")
+        self.ollama_status_var = tk.StringVar(value="Ollama сервер отключен")
+        ttk.Label(status_frame, textvariable=self.ollama_status_var).pack(anchor="w", padx=5, pady=5)
+        self.ollama_log = tk.Text(status_frame, width=70, height=6, state="disabled")
+        self.ollama_log.pack(fill="both", expand=True, padx=5, pady=(0, 5))
+
+        ttk.Button(frame, text="Сохранить", command=self.save_settings).grid(row=3, column=1, pady=5, sticky="w")
 
     # ------------------------------------------------------------------
     # utility methods
@@ -470,7 +477,10 @@ class ControlPanel:
 
     def append_ollama_log(self, text: str) -> None:
         """Append a line from the Ollama process to the log output."""
-        print(text)
+        self.ollama_log.config(state="normal")
+        self.ollama_log.insert(tk.END, text + "\n")
+        self.ollama_log.see(tk.END)
+        self.ollama_log.config(state="disabled")
 
     def start_ollama(self) -> None:
         """Launch the Ollama server using a helper script and wait for readiness."""
@@ -478,6 +488,10 @@ class ControlPanel:
         script = "run_ollama.bat" if os.name == "nt" else "run_ollama.sh"
         path = Path(__file__).with_name(script)
         self.status_var.set("Запуск Ollama...")
+        self.ollama_status_var.set("Ollama сервер запускается")
+        self.ollama_log.config(state="normal")
+        self.ollama_log.delete("1.0", tk.END)
+        self.ollama_log.config(state="disabled")
 
         def _run() -> None:
             try:
@@ -494,6 +508,8 @@ class ControlPanel:
                 if ret != 0:
                     msg = "".join(output).strip() or "Неизвестная ошибка"
                     self.master.after(0, lambda: self.status_var.set("Ошибка запуска Ollama"))
+                    self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер не запустился"))
+                    self.master.after(0, lambda: self.append_ollama_log(msg))
                     self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось запустить сервер: {msg}"))
                     return
                 self.master.after(0, lambda: self.status_var.set("Ollama сервер запускается"))
@@ -504,16 +520,20 @@ class ControlPanel:
                         try:
                             with urllib.request.urlopen(url, timeout=1):
                                 self.master.after(0, lambda: self.status_var.set("Ollama сервер запущен"))
+                                self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер запущен"))
                                 self.master.after(0, lambda: messagebox.showinfo("Ollama", "Сервер Ollama запущен"))
                                 return
                         except Exception:
                             time.sleep(0.5)
                     self.master.after(0, lambda: self.status_var.set("Ollama не отвечает"))
+                    self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер не запустился"))
                     self.master.after(0, lambda: messagebox.showerror("Ollama", "Сервер Ollama не ответил"))
 
                 threading.Thread(target=_wait_ready, daemon=True).start()
             except Exception as exc:
                 self.master.after(0, lambda: self.status_var.set("Ошибка запуска Ollama"))
+                self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер не запустился"))
+                self.master.after(0, lambda: self.append_ollama_log(str(exc)))
                 self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось запустить сервер: {exc}"))
 
         threading.Thread(target=_run, daemon=True).start()
@@ -521,6 +541,7 @@ class ControlPanel:
     def stop_ollama(self) -> None:
         """Stop the Ollama server process."""
         self.status_var.set("Остановка Ollama...")
+        self.ollama_status_var.set("Ollama сервер отключается")
 
         def _run() -> None:
             try:
@@ -537,12 +558,17 @@ class ControlPanel:
                 if ret != 0:
                     msg = "".join(output).strip() or "Неизвестная ошибка"
                     self.master.after(0, lambda: self.status_var.set("Ошибка остановки Ollama"))
+                    self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер не остановлен"))
+                    self.master.after(0, lambda: self.append_ollama_log(msg))
                     self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось остановить сервер: {msg}"))
                     return
                 self.master.after(0, lambda: self.status_var.set("Ollama сервер остановлен"))
+                self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер отключен"))
                 self.master.after(0, lambda: messagebox.showinfo("Ollama", "Сервер Ollama остановлен"))
             except Exception as exc:
                 self.master.after(0, lambda: self.status_var.set("Ошибка остановки Ollama"))
+                self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер не остановлен"))
+                self.master.after(0, lambda: self.append_ollama_log(str(exc)))
                 self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось остановить сервер: {exc}"))
 
         threading.Thread(target=_run, daemon=True).start()
