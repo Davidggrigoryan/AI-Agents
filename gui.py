@@ -13,7 +13,7 @@ import threading
 import time
 import urllib.request
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, scrolledtext
 
 # maximum length for OpenAI API key
 API_KEY_MAX_LEN = 400
@@ -324,6 +324,10 @@ class ControlPanel:
 
         ttk.Button(frame, text="Сохранить", command=self.save_settings).grid(row=2, column=1, pady=5, sticky="w")
 
+        # log window for Ollama server status and output
+        self.ollama_log = scrolledtext.ScrolledText(self.settings_tab, width=80, height=10, state="disabled")
+        self.ollama_log.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
     # ------------------------------------------------------------------
     # utility methods
     def _valid_api_key(self, key: str) -> bool:
@@ -468,23 +472,40 @@ class ControlPanel:
         self.status_var.set("Настройки сохранены")
         messagebox.showinfo("Настройки", "Настройки сохранены")
 
+    def append_ollama_log(self, text: str) -> None:
+        """Append a timestamped line to the Ollama log window."""
+        if not hasattr(self, "ollama_log"):
+            return
+        self.ollama_log.configure(state="normal")
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.ollama_log.insert(tk.END, f"[{ts}] {text}\n")
+        self.ollama_log.configure(state="disabled")
+        self.ollama_log.see(tk.END)
+
     def start_ollama(self) -> None:
         """Launch the Ollama server using a helper script and wait for readiness."""
         port = self.ollama_port_var.get().strip() or "11434"
         script = "run_ollama.bat" if os.name == "nt" else "run_ollama.sh"
         path = Path(__file__).with_name(script)
         self.status_var.set("Запуск Ollama...")
+        self.append_ollama_log(f"Запуск Ollama на порту {port}")
         try:
             if os.name == "nt":
                 proc = subprocess.run(["cmd", "/c", str(path), port], capture_output=True, text=True)
             else:
                 proc = subprocess.run([str(path), port], capture_output=True, text=True)
+            if proc.stdout:
+                self.append_ollama_log(proc.stdout.strip())
+            if proc.stderr:
+                self.append_ollama_log(proc.stderr.strip())
             if proc.returncode != 0:
                 msg = proc.stderr.strip() or proc.stdout.strip() or "Неизвестная ошибка"
                 self.status_var.set("Ошибка запуска Ollama")
+                self.append_ollama_log(f"Ошибка запуска: {msg}")
                 messagebox.showerror("Ollama", f"Не удалось запустить сервер: {msg}")
                 return
             self.status_var.set("Ollama сервер запускается")
+            self.append_ollama_log("Ollama сервер запускается")
 
             def _wait_ready() -> None:
                 url = f"http://127.0.0.1:{port}/"
@@ -492,35 +513,46 @@ class ControlPanel:
                     try:
                         with urllib.request.urlopen(url, timeout=1):
                             self.status_var.set("Ollama сервер запущен")
+                            self.master.after(0, lambda: self.append_ollama_log("Ollama сервер запущен"))
                             self.master.after(0, lambda: messagebox.showinfo("Ollama", "Сервер Ollama запущен"))
                             return
                     except Exception:
                         time.sleep(0.5)
                 self.status_var.set("Ollama не отвечает")
+                self.master.after(0, lambda: self.append_ollama_log("Ollama не отвечает"))
                 self.master.after(0, lambda: messagebox.showerror("Ollama", "Сервер Ollama не ответил"))
 
             threading.Thread(target=_wait_ready, daemon=True).start()
         except Exception as exc:
             self.status_var.set("Ошибка запуска Ollama")
+            self.append_ollama_log(f"Исключение при запуске: {exc}")
             messagebox.showerror("Ollama", f"Не удалось запустить сервер: {exc}")
 
     def stop_ollama(self) -> None:
         """Stop the Ollama server process."""
         self.status_var.set("Остановка Ollama...")
+        self.append_ollama_log("Остановка Ollama")
         try:
             if os.name == "nt":
                 proc = subprocess.run(["taskkill", "/f", "/im", "ollama.exe"], capture_output=True, text=True)
             else:
                 proc = subprocess.run(["pkill", "-f", "ollama serve"], capture_output=True, text=True)
+            if proc.stdout:
+                self.append_ollama_log(proc.stdout.strip())
+            if proc.stderr:
+                self.append_ollama_log(proc.stderr.strip())
             if proc.returncode != 0:
                 msg = proc.stderr.strip() or proc.stdout.strip() or "Неизвестная ошибка"
                 self.status_var.set("Ошибка остановки Ollama")
+                self.append_ollama_log(f"Ошибка остановки: {msg}")
                 messagebox.showerror("Ollama", f"Не удалось остановить сервер: {msg}")
                 return
             self.status_var.set("Ollama сервер остановлен")
+            self.append_ollama_log("Ollama сервер остановлен")
             messagebox.showinfo("Ollama", "Сервер Ollama остановлен")
         except Exception as exc:
             self.status_var.set("Ошибка остановки Ollama")
+            self.append_ollama_log(f"Исключение при остановке: {exc}")
             messagebox.showerror("Ollama", f"Не удалось остановить сервер: {exc}")
 
     def delete_key(self) -> None:
