@@ -501,6 +501,17 @@ class ControlPanel:
         self.ollama_log.delete("1.0", tk.END)
         self.ollama_log.config(state="disabled")
 
+        # avoid starting another instance if server already responds on the port
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1):
+                self.status_var.set("Ollama сервер уже запущен")
+                self.ollama_status_var.set("Ollama сервер запущен")
+                self.append_ollama_log("Сервер уже запущен")
+                messagebox.showinfo("Ollama", "Сервер Ollama уже запущен")
+                return
+        except Exception:
+            pass
+
         def _run() -> None:
             try:
                 if os.name == "nt":
@@ -514,11 +525,10 @@ class ControlPanel:
                         output.append(clean)
                         self.master.after(0, lambda line=clean: self.append_ollama_log(line))
                 ret = proc.wait()
-                if ret != 0:
-                    msg = "".join(output).strip() or "Неизвестная ошибка"
+                if ret != 0 or any(line.lower().startswith("error") for line in output):
+                    msg = "\n".join(output).strip() or "Неизвестная ошибка"
                     self.master.after(0, lambda: self.status_var.set("Ошибка запуска Ollama"))
                     self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер не запустился"))
-                    self.master.after(0, lambda: self.append_ollama_log(msg))
                     self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось запустить сервер: {msg}"))
                     return
                 self.master.after(0, lambda: self.status_var.set("Ollama сервер запускается"))
