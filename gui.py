@@ -13,7 +13,7 @@ import threading
 import time
 import urllib.request
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, scrolledtext
 
 # maximum length for OpenAI API key
 API_KEY_MAX_LEN = 400
@@ -91,6 +91,7 @@ class ControlPanel:
         self._task_counter = 1
         self._sort_dirs: dict[str, bool] = {}
         self.editing_task: Task | None = None
+        self.chat_history: dict[str, list[tuple[str, str]]] = {agent.name: [] for agent in self.agents}
 
         self.notebook = ttk.Notebook(master)
         self.notebook.pack(fill="both", expand=True)
@@ -106,6 +107,10 @@ class ControlPanel:
         self.agents_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.agents_tab, text="Агенты")
         self._build_agents_tab()
+
+        self.chat_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.chat_tab, text="Чат")
+        self._build_chat_tab()
 
         self.settings_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.settings_tab, text="Настройки")
@@ -280,6 +285,46 @@ class ControlPanel:
         save_btn.grid(row=4, column=1, pady=5, sticky="w")
         ToolTip(save_btn, "Сохранить настройки агента")
 
+    def _build_chat_tab(self) -> None:
+        frame = ttk.Frame(self.chat_tab)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        top = ttk.Frame(frame)
+        top.pack(fill="x", pady=(0, 10))
+        ttk.Label(top, text="Агент").pack(side="left")
+        self.chat_agent_combo = ttk.Combobox(top, state="readonly", width=30)
+        self.chat_agent_combo.pack(side="left", padx=5)
+        self.chat_agent_combo.bind("<<ComboboxSelected>>", self._on_chat_agent_change)
+
+        self.chat_status_label = ttk.Label(top, text="Выберите агента для беседы")
+        self.chat_status_label.pack(side="left", fill="x", expand=True)
+
+        self.chat_log = scrolledtext.ScrolledText(frame, wrap="word", height=15, state="disabled")
+        self.chat_log.pack(fill="both", expand=True)
+
+        input_frame = ttk.Frame(frame)
+        input_frame.pack(fill="x", pady=(10, 0))
+
+        self.chat_entry = tk.Text(input_frame, height=3, wrap="word")
+        self.chat_entry.pack(side="left", fill="both", expand=True)
+        ToolTip(self.chat_entry, "Введите сообщение и нажмите Отправить")
+
+        button_frame = ttk.Frame(input_frame)
+        button_frame.pack(side="left", padx=(10, 0))
+
+        self.chat_send_btn = ttk.Button(button_frame, text="Отправить", command=self._send_chat_message)
+        self.chat_send_btn.pack(fill="x")
+        ToolTip(self.chat_send_btn, "Отправить сообщение выбранному агенту")
+
+        self.chat_clear_btn = ttk.Button(button_frame, text="Очистить", command=self._clear_chat_history)
+        self.chat_clear_btn.pack(fill="x", pady=(5, 0))
+        ToolTip(self.chat_clear_btn, "Очистить историю чата для агента")
+
+        self._set_chat_controls_state(bool(self.agents))
+
+        self.chat_entry.bind("<Control-Return>", lambda _e: self._send_chat_message())
+        self.chat_entry.bind("<Shift-Return>", lambda e: None)
+
     def _build_settings_tab(self) -> None:
         frame = ttk.Frame(self.settings_tab)
         frame.pack(fill="x", padx=10, pady=10)
@@ -384,12 +429,127 @@ class ControlPanel:
         for name in names:
             self.agent_listbox.insert(tk.END, name)
 
+        if hasattr(self, "chat_agent_combo"):
+            current = self.chat_agent_combo.get()
+            self.chat_agent_combo["values"] = names
+            if names:
+                if current in names:
+                    self.chat_agent_combo.set(current)
+                else:
+                    self.chat_agent_combo.current(0)
+                    current = self.chat_agent_combo.get()
+                self._set_chat_controls_state(True)
+                self._render_chat_history(current or names[0])
+            else:
+                self.chat_agent_combo.set("")
+                self._render_chat_history(None)
+                self._set_chat_controls_state(False)
+
+    def _set_chat_controls_state(self, enabled: bool) -> None:
+        if not hasattr(self, "chat_entry"):
+            return
+        if enabled:
+            self.chat_entry.config(state="normal")
+            self.chat_send_btn.state(["!disabled"])
+            self.chat_clear_btn.state(["!disabled"])
+            if not self.chat_agent_combo.get():
+                self.chat_status_label.config(text="Выберите агента для беседы")
+        else:
+            self.chat_entry.delete("1.0", tk.END)
+            self.chat_entry.config(state="disabled")
+            self.chat_send_btn.state(["disabled"])
+            self.chat_clear_btn.state(["disabled"])
+            self.chat_status_label.config(text="Добавьте агента во вкладке 'Агенты'")
+
+    def _render_chat_history(self, agent_name: str | None) -> None:
+        if not hasattr(self, "chat_log"):
+            return
+        self.chat_log.config(state="normal")
+        self.chat_log.delete("1.0", tk.END)
+
+        if not agent_name:
+            self.chat_log.insert(
+                tk.END,
+                "Нет доступных агентов. Добавьте агента во вкладке 'Агенты', чтобы начать переписку.",
+            )
+            self.chat_log.config(state="disabled")
+            self.chat_status_label.config(text="Нет доступных агентов")
+            return
+
+        history = self.chat_history.setdefault(agent_name, [])
+        if history:
+            for speaker, text in history:
+                self.chat_log.insert(tk.END, f"{speaker}: {text}\n\n")
+        else:
+            self.chat_log.insert(tk.END, "История пуста. Напишите сообщение, чтобы начать диалог.")
+        self.chat_log.config(state="disabled")
+
+        agent = self._find_agent(agent_name)
+        if agent:
+            self.chat_status_label.config(text=f"Чат с {agent.name} ({agent.status})")
+        else:
+            self.chat_status_label.config(text="Выберите агента для беседы")
+
+    def _append_chat_message(self, agent_name: str, speaker: str, text: str) -> None:
+        history = self.chat_history.setdefault(agent_name, [])
+        history.append((speaker, text))
+        self._render_chat_history(agent_name)
+
+    def _send_chat_message(self) -> None:
+        if not hasattr(self, "chat_entry") or self.chat_entry.cget("state") == "disabled":
+            return
+        agent_name = self.chat_agent_combo.get().strip()
+        if not agent_name:
+            messagebox.showwarning("Чат", "Выберите агента для беседы")
+            return
+        message = self.chat_entry.get("1.0", tk.END).strip()
+        if not message:
+            return
+        self.chat_entry.delete("1.0", tk.END)
+        self._append_chat_message(agent_name, "Вы", message)
+
+        agent = self._find_agent(agent_name)
+        if agent:
+            status = agent.status
+            prompt_snippet = agent.prompt.strip() or agent.role.strip()
+            if prompt_snippet:
+                prompt_snippet = " ".join(prompt_snippet.split())
+                if len(prompt_snippet) > 160:
+                    prompt_snippet = prompt_snippet[:157] + "…"
+                response = f"{agent.name} ({status}): учту — {prompt_snippet}"
+            else:
+                response = f"{agent.name} ({status}): сообщение получено"
+            speaker = agent.name
+        else:
+            response = "Система: не удалось найти выбранного агента"
+            speaker = "Система"
+        self._append_chat_message(agent_name, speaker, response)
+
+    def _clear_chat_history(self) -> None:
+        agent_name = self.chat_agent_combo.get().strip() if hasattr(self, "chat_agent_combo") else ""
+        if not agent_name:
+            return
+        if not messagebox.askyesno("Чат", f"Очистить историю для агента {agent_name}?"):
+            return
+        self.chat_history[agent_name] = []
+        self._render_chat_history(agent_name)
+
+    def _on_chat_agent_change(self, _event: tk.Event | None = None) -> None:
+        agent_name = self.chat_agent_combo.get().strip()
+        if not agent_name:
+            self.chat_status_label.config(text="Выберите агента для беседы")
+            self._render_chat_history(None)
+            return
+        self.chat_history.setdefault(agent_name, [])
+        self._render_chat_history(agent_name)
+
     def create_agent(self) -> None:
         name = self.new_agent_entry.get().strip()
         role = self.agent_role_entry.get().strip()
         if not name:
             return
         self.agents.append(AIAgent(name, role=role))
+        self.chat_history.setdefault(name, [])
         self.new_agent_entry.delete(0, tk.END)
         self.agent_role_entry.delete(0, tk.END)
         self._refresh_agent_lists()
@@ -408,6 +568,8 @@ class ControlPanel:
             self.agents.remove(agent)
             self.tasks = [t for t in self.tasks if t.agent != name]
             self.refresh_table()
+        if name in self.chat_history:
+            del self.chat_history[name]
         self._refresh_agent_lists()
         self.save_agents()
         self.status_var.set(f"Агент {name} удален")
