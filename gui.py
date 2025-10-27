@@ -12,6 +12,7 @@ import subprocess
 import threading
 import time
 import urllib.request
+import urllib.error
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -83,6 +84,7 @@ class ControlPanel:
         self.master.title("Agents – Control Panel")
 
         self.load_config()
+        self.ollama_port_var = tk.StringVar(value=str(self.config.get("ollama_port", "")))
         self.agents: list[AIAgent] = []
         self.load_agents()
 
@@ -91,6 +93,7 @@ class ControlPanel:
         self._task_counter = 1
         self._sort_dirs: dict[str, bool] = {}
         self.editing_task: Task | None = None
+        self.chat_messages: list[dict[str, str]] = []
 
         self.notebook = ttk.Notebook(master)
         self.notebook.pack(fill="both", expand=True)
@@ -106,6 +109,10 @@ class ControlPanel:
         self.agents_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.agents_tab, text="Агенты")
         self._build_agents_tab()
+
+        self.chat_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.chat_tab, text="Чат")
+        self._build_chat_tab()
 
         self.settings_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.settings_tab, text="Настройки")
@@ -280,6 +287,97 @@ class ControlPanel:
         save_btn.grid(row=4, column=1, pady=5, sticky="w")
         ToolTip(save_btn, "Сохранить настройки агента")
 
+    def _build_chat_tab(self) -> None:
+        frame = ttk.Frame(self.chat_tab)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self.chat_history = tk.Text(frame, state="disabled", width=60, height=15, wrap="word")
+        self.chat_history.pack(fill="both", expand=True)
+
+        input_frame = ttk.Frame(frame)
+        input_frame.pack(fill="x", pady=(5, 0))
+
+        ttk.Label(input_frame, text="Модель").pack(side="left")
+        self.chat_model_var = tk.StringVar(value=self.config.get("ollama_model", "llama2"))
+        self.chat_model_combo = ttk.Combobox(
+            input_frame,
+            textvariable=self.chat_model_var,
+            width=15,
+            state="readonly",
+        )
+        self.chat_model_combo.pack(side="left", padx=5)
+        self.chat_model_combo.bind("<Button-1>", lambda _e: self.refresh_ollama_models())
+        self.refresh_ollama_models()
+
+        self.chat_entry = tk.Text(input_frame, height=3)
+        self.chat_entry.pack(side="left", fill="x", expand=True, padx=5)
+
+        send_btn = ttk.Button(input_frame, text="Отправить", command=self.send_chat)
+        send_btn.pack(side="left")
+
+    def append_chat(self, text: str) -> None:
+        self.chat_history.config(state="normal")
+        self.chat_history.insert(tk.END, text + "\n")
+        self.chat_history.see(tk.END)
+        self.chat_history.config(state="disabled")
+
+    def send_chat(self) -> None:
+        message = self.chat_entry.get("1.0", tk.END).strip()
+        if not message:
+            return
+        self.chat_entry.delete("1.0", tk.END)
+        self.append_chat(f"Вы: {message}")
+        self.chat_messages.append({"role": "user", "content": message})
+        threading.Thread(target=self._chat_request, daemon=True).start()
+
+    def _chat_request(self) -> None:
+        port = self.ollama_port_var.get().strip() or "11434"
+        model = self.chat_model_var.get().strip() or "llama2"
+        base = f"http://127.0.0.1:{port}"
+        headers = {"Content-Type": "application/json"}
+        payload = json.dumps({"model": model, "messages": self.chat_messages, "stream": False}).encode("utf-8")
+        req = urllib.request.Request(f"{base}/api/chat", data=payload, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req) as resp:
+                resp_data = json.loads(resp.read().decode("utf-8"))
+                reply = resp_data.get("message", {}).get("content", "")
+        except urllib.error.HTTPError as err:
+            if err.code == 404:
+                # Fallback for older Ollama versions without /api/chat
+                prompt = "\n".join(f"{m['role']}: {m['content']}" for m in self.chat_messages)
+                payload = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode("utf-8")
+                alt_req = urllib.request.Request(f"{base}/api/generate", data=payload, headers=headers, method="POST")
+                try:
+                    with urllib.request.urlopen(alt_req) as resp:
+                        resp_data = json.loads(resp.read().decode("utf-8"))
+                        reply = resp_data.get("response", "")
+                except Exception as exc:
+                    reply = f"Ошибка: {exc}"
+            else:
+                reply = f"Ошибка: {err}"
+        except Exception as exc:
+            reply = f"Ошибка: {exc}"
+        self.chat_messages.append({"role": "assistant", "content": reply})
+        self.master.after(0, lambda: self.append_chat(f"Ollama: {reply}"))
+
+    def refresh_ollama_models(self) -> None:
+        """Fetch installed Ollama models and update the combo box."""
+        port = self.ollama_port_var.get().strip() or "11434"
+        url = f"http://127.0.0.1:{port}/api/tags"
+        try:
+            with urllib.request.urlopen(url) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                models = [m.get("name") for m in data.get("models", [])]
+        except Exception:
+            models = []
+        if not models:
+            current = self.chat_model_var.get().strip()
+            if current:
+                models = [current]
+        self.chat_model_combo["values"] = models
+        if models and self.chat_model_var.get() not in models:
+            self.chat_model_var.set(models[0])
+
     def _build_settings_tab(self) -> None:
         frame = ttk.Frame(self.settings_tab)
         frame.pack(fill="x", padx=10, pady=10)
@@ -317,12 +415,23 @@ class ControlPanel:
         self.update_key_info()
 
         ttk.Label(frame, text="Ollama порт").grid(row=1, column=0, sticky="w")
-        self.ollama_port_var = tk.StringVar(value=str(self.config.get("ollama_port", "")))
         ttk.Entry(frame, textvariable=self.ollama_port_var, width=10).grid(row=1, column=1, padx=5, pady=2, sticky="w")
-        ttk.Button(frame, text="Запустить Ollama", command=self.start_ollama).grid(row=1, column=2, padx=5, pady=2)
-        ttk.Button(frame, text="Остановить Ollama", command=self.stop_ollama).grid(row=1, column=3, padx=5, pady=2)
 
-        ttk.Button(frame, text="Сохранить", command=self.save_settings).grid(row=2, column=1, pady=5, sticky="w")
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=1, column=2, columnspan=2, padx=5, pady=2, sticky="w")
+        btn_frame.grid_columnconfigure(0, weight=1)
+        btn_frame.grid_columnconfigure(1, weight=1)
+        ttk.Button(btn_frame, text="Запустить Ollama", command=self.start_ollama).grid(row=0, column=0, padx=5, pady=2)
+        ttk.Button(btn_frame, text="Остановить Ollama", command=self.stop_ollama).grid(row=0, column=1, padx=5, pady=2)
+
+        status_frame = ttk.LabelFrame(btn_frame, text="Статус Ollama")
+        status_frame.grid(row=1, column=0, columnspan=2, pady=(5, 0), sticky="ew")
+        self.ollama_status_var = tk.StringVar(value="Ollama сервер отключен")
+        ttk.Label(status_frame, textvariable=self.ollama_status_var).pack(anchor="w", padx=5, pady=5)
+        self.ollama_log = tk.Text(status_frame, width=70, height=6, state="disabled")
+        self.ollama_log.pack(fill="both", expand=True, padx=5, pady=(0, 5))
+
+        ttk.Button(frame, text="Сохранить", command=self.save_settings).grid(row=3, column=1, pady=5, sticky="w")
 
     # ------------------------------------------------------------------
     # utility methods
@@ -449,10 +558,11 @@ class ControlPanel:
             messagebox.showinfo("Агенты", f"Настройки агента {name} сохранены")
 
     def save_settings(self) -> None:
-        if not messagebox.askyesno("Сохранить настройки", "Сохранить ключ и порт?"):
+        if not messagebox.askyesno("Сохранить настройки", "Сохранить ключ, порт и модель?"):
             return
         key = self.api_key_var.get().strip()
         port = self.ollama_port_var.get().strip()
+        model = self.chat_model_var.get().strip()
 
         if key and not self._valid_api_key(key):
             messagebox.showerror("Настройки", "Некорректный OpenAI API ключ")
@@ -464,13 +574,20 @@ class ControlPanel:
 
         self.config["openai_key"] = key
         self.config["ollama_port"] = port
+        self.config["ollama_model"] = model or self.config.get("ollama_model", "llama2")
         self.save_config()
         self.status_var.set("Настройки сохранены")
         messagebox.showinfo("Настройки", "Настройки сохранены")
 
     def append_ollama_log(self, text: str) -> None:
         """Append a line from the Ollama process to the log output."""
-        print(text)
+        clean = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text).strip()
+        if not clean:
+            return
+        self.ollama_log.config(state="normal")
+        self.ollama_log.insert(tk.END, clean + "\n")
+        self.ollama_log.see(tk.END)
+        self.ollama_log.config(state="disabled")
 
     def start_ollama(self) -> None:
         """Launch the Ollama server using a helper script and wait for readiness."""
@@ -478,42 +595,65 @@ class ControlPanel:
         script = "run_ollama.bat" if os.name == "nt" else "run_ollama.sh"
         path = Path(__file__).with_name(script)
         self.status_var.set("Запуск Ollama...")
+        self.ollama_status_var.set("Ollama сервер запускается")
+        self.ollama_log.config(state="normal")
+        self.ollama_log.delete("1.0", tk.END)
+        self.ollama_log.config(state="disabled")
+
+        # avoid starting another instance if server already responds on the port
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1):
+                self.status_var.set("Ollama сервер уже запущен")
+                self.ollama_status_var.set("Ollama сервер запущен")
+                self.append_ollama_log("Сервер уже запущен")
+                self.refresh_ollama_models()
+                messagebox.showinfo("Ollama", "Сервер Ollama уже запущен")
+                return
+        except Exception:
+            pass
 
         def _run() -> None:
             try:
                 if os.name == "nt":
-                    proc = subprocess.Popen(["cmd", "/c", str(path), port], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    proc = subprocess.Popen(["cmd", "/c", str(path), port], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="ignore")
                 else:
-                    proc = subprocess.Popen([str(path), port], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    proc = subprocess.Popen([str(path), port], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="ignore")
                 output: list[str] = []
                 if proc.stdout:
                     for line in proc.stdout:
-                        output.append(line)
-                        self.master.after(0, lambda line=line: self.append_ollama_log(line.rstrip()))
+                        clean = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line).rstrip()
+                        output.append(clean)
+                        self.master.after(0, lambda line=clean: self.append_ollama_log(line))
                 ret = proc.wait()
-                if ret != 0:
-                    msg = "".join(output).strip() or "Неизвестная ошибка"
+                if ret != 0 or any(line.lower().startswith("error") for line in output):
+                    msg = "\n".join(output).strip() or "Неизвестная ошибка"
                     self.master.after(0, lambda: self.status_var.set("Ошибка запуска Ollama"))
+                    self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер не запустился"))
                     self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось запустить сервер: {msg}"))
                     return
                 self.master.after(0, lambda: self.status_var.set("Ollama сервер запускается"))
 
                 def _wait_ready() -> None:
                     url = f"http://127.0.0.1:{port}/"
-                    for _ in range(20):
+                    for _ in range(60):
                         try:
                             with urllib.request.urlopen(url, timeout=1):
                                 self.master.after(0, lambda: self.status_var.set("Ollama сервер запущен"))
+                                self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер запущен"))
+                                self.master.after(0, self.refresh_ollama_models)
                                 self.master.after(0, lambda: messagebox.showinfo("Ollama", "Сервер Ollama запущен"))
                                 return
                         except Exception:
-                            time.sleep(0.5)
+                            time.sleep(1)
                     self.master.after(0, lambda: self.status_var.set("Ollama не отвечает"))
+                    self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер не запустился"))
                     self.master.after(0, lambda: messagebox.showerror("Ollama", "Сервер Ollama не ответил"))
 
                 threading.Thread(target=_wait_ready, daemon=True).start()
             except Exception as exc:
                 self.master.after(0, lambda: self.status_var.set("Ошибка запуска Ollama"))
+                self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер не запустился"))
+                self.master.after(0, lambda: self.append_ollama_log(str(exc)))
                 self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось запустить сервер: {exc}"))
 
         threading.Thread(target=_run, daemon=True).start()
@@ -521,28 +661,33 @@ class ControlPanel:
     def stop_ollama(self) -> None:
         """Stop the Ollama server process."""
         self.status_var.set("Остановка Ollama...")
+        self.ollama_status_var.set("Ollama сервер отключается")
 
         def _run() -> None:
             try:
                 if os.name == "nt":
-                    proc = subprocess.Popen(["taskkill", "/f", "/im", "ollama.exe"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    proc = subprocess.Popen(["taskkill", "/f", "/im", "ollama.exe"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="ignore")
                 else:
-                    proc = subprocess.Popen(["pkill", "-f", "ollama serve"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    proc = subprocess.Popen(["pkill", "-f", "ollama serve"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="ignore")
                 output: list[str] = []
                 if proc.stdout:
                     for line in proc.stdout:
-                        output.append(line)
-                        self.master.after(0, lambda line=line: self.append_ollama_log(line.rstrip()))
+                        output.append(re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line))
                 ret = proc.wait()
                 if ret != 0:
                     msg = "".join(output).strip() or "Неизвестная ошибка"
                     self.master.after(0, lambda: self.status_var.set("Ошибка остановки Ollama"))
+                    self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер не остановлен"))
+                    self.master.after(0, lambda: self.append_ollama_log(msg))
                     self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось остановить сервер: {msg}"))
                     return
                 self.master.after(0, lambda: self.status_var.set("Ollama сервер остановлен"))
+                self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер отключен"))
                 self.master.after(0, lambda: messagebox.showinfo("Ollama", "Сервер Ollama остановлен"))
             except Exception as exc:
                 self.master.after(0, lambda: self.status_var.set("Ошибка остановки Ollama"))
+                self.master.after(0, lambda: self.ollama_status_var.set("Ollama сервер не остановлен"))
+                self.master.after(0, lambda: self.append_ollama_log(str(exc)))
                 self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось остановить сервер: {exc}"))
 
         threading.Thread(target=_run, daemon=True).start()
@@ -581,9 +726,10 @@ class ControlPanel:
             try:
                 self.config = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
-                self.config = {"openai_key": "", "ollama_port": "11434"}
+                self.config = {"openai_key": "", "ollama_port": "11434", "ollama_model": "llama2"}
         else:
-            self.config = {"openai_key": "", "ollama_port": "11434"}
+            self.config = {"openai_key": "", "ollama_port": "11434", "ollama_model": "llama2"}
+        self.config.setdefault("ollama_model", "llama2")
 
     def save_config(self) -> None:
         path = Path("config.json")
