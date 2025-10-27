@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Streaming Ollama Client</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1>Ollama Streaming Demo</h1>
+        <p class="subtitle">
+          Генерация ответов с токен‑стримингом, живыми индикаторами и тёплым стартом.
+        </p>
+      </header>
+
+      <section class="controls">
+        <label class="field">
+          <span>Запрос</span>
+          <textarea id="prompt" rows="6" placeholder="Опишите задачу..." required></textarea>
+        </label>
+
+        <div class="row">
+          <label class="field inline">
+            <span>Модель</span>
+            <input id="model" type="text" placeholder="llama3" />
+          </label>
+          <label class="field inline">
+            <span>num_predict</span>
+            <input id="num-predict" type="number" min="32" max="4096" step="32" value="512" />
+          </label>
+        </div>
+
+        <div class="buttons">
+          <button id="generate" class="primary">Сгенерировать</button>
+          <button id="cancel" class="secondary" disabled>Отмена</button>
+          <button id="retry" class="secondary" disabled>Повторить</button>
+          <button id="shorten" class="secondary">Укоротить ответ</button>
+        </div>
+      </section>
+
+      <section class="status-panel">
+        <div class="status-line">
+          <span id="status">Ожидает ввода…</span>
+          <span id="timer">0.0 с</span>
+        </div>
+        <div id="hint" class="hint"></div>
+        <div id="meta" class="meta"></div>
+      </section>
+
+      <section class="output">
+        <h2>Ответ</h2>
+        <pre id="response"></pre>
+      </section>
+    </main>
+
+    <script src="/static/app.js" type="module"></script>
+  </body>
+</html>
