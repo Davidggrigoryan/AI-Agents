@@ -96,6 +96,8 @@ class ControlPanel:
         self.ollama_status_var = tk.StringVar(value="Ollama: неизвестно")
         self.ollama_status_canvas: tk.Canvas | None = None
         self._ollama_status_after: str | None = None
+        self._ollama_process: subprocess.Popen[str] | None = None
+        self._ollama_stopping = False
 
         self.notebook = ttk.Notebook(master)
         self.notebook.pack(fill="both", expand=True)
@@ -536,79 +538,131 @@ class ControlPanel:
         return str(self.config.get("ollama_port", "11434")) or "11434"
 
     def start_ollama(self) -> None:
-        """Launch the Ollama server using a helper script and wait for readiness."""
-        port = self.ollama_port_var.get().strip() or "11434"
-        script = "run_ollama.bat" if os.name == "nt" else "run_ollama.sh"
-        path = Path(__file__).with_name(script)
+        """Launch the Ollama server directly and wait until it becomes available."""
+        port = (self.ollama_port_var.get().strip() or "11434") if hasattr(self, "ollama_port_var") else "11434"
+        if not self._valid_port(port):
+            messagebox.showerror("Настройки", "Некорректный порт Ollama")
+            return
+        if self._ollama_process and self._ollama_process.poll() is None:
+            messagebox.showinfo("Ollama", "Сервер Ollama уже запущен")
+            return
+
         self.status_var.set("Запуск Ollama...")
+        self._ollama_stopping = False
 
         def _run() -> None:
             try:
-                if os.name == "nt":
-                    proc = subprocess.Popen(["cmd", "/c", str(path), port], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                else:
-                    proc = subprocess.Popen([str(path), port], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                output: list[str] = []
-                if proc.stdout:
+                proc = subprocess.Popen(
+                    ["ollama", "serve", "--port", port],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+            except FileNotFoundError:
+                self.master.after(0, lambda: self.status_var.set("Ошибка запуска Ollama"))
+                self.master.after(0, lambda: messagebox.showerror("Ollama", "Команда ollama не найдена"))
+                return
+            except Exception as exc:  # pragma: no cover - unexpected errors
+                self.master.after(0, lambda: self.status_var.set("Ошибка запуска Ollama"))
+                self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось запустить сервер: {exc}"))
+                return
+
+            self._ollama_process = proc
+            output: list[str] = []
+
+            if proc.stdout:
+                def _pump() -> None:
                     for line in proc.stdout:
                         output.append(line)
                         self.master.after(0, lambda line=line: self.append_ollama_log(line.rstrip()))
+
+                threading.Thread(target=_pump, daemon=True).start()
+
+            def _wait_ready() -> None:
+                url = f"http://127.0.0.1:{port}/"
+                for _ in range(40):
+                    if proc.poll() is not None:
+                        msg = "".join(output).strip() or f"Код завершения: {proc.returncode}"
+                        self._ollama_process = None
+                        self.master.after(0, lambda: self.status_var.set("Ошибка запуска Ollama"))
+                        self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось запустить сервер: {msg}"))
+                        self.master.after(0, self.update_ollama_status)
+                        return
+                    try:
+                        with urllib.request.urlopen(url, timeout=1):
+                            self.master.after(0, lambda: self.status_var.set("Ollama сервер запущен"))
+                            self.master.after(0, self.update_ollama_status)
+                            self.master.after(0, lambda: messagebox.showinfo("Ollama", "Сервер Ollama запущен"))
+                            return
+                    except Exception:
+                        time.sleep(0.5)
+                self.master.after(0, lambda: self.status_var.set("Ollama не отвечает"))
+                self.master.after(0, lambda: messagebox.showerror("Ollama", "Сервер Ollama не ответил"))
+
+            def _monitor() -> None:
                 ret = proc.wait()
-                if ret != 0:
-                    msg = "".join(output).strip() or "Неизвестная ошибка"
-                    self.master.after(0, lambda: self.status_var.set("Ошибка запуска Ollama"))
-                    self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось запустить сервер: {msg}"))
-                    return
-                self.master.after(0, lambda: self.status_var.set("Ollama сервер запускается"))
+                stopping = self._ollama_stopping
+                self._ollama_process = None
+                self._ollama_stopping = False
+                if stopping:
+                    self.master.after(0, lambda: self.status_var.set("Ollama сервер остановлен"))
+                    self.master.after(0, lambda: messagebox.showinfo("Ollama", "Сервер Ollama остановлен"))
+                elif ret == 0:
+                    self.master.after(0, lambda: self.status_var.set("Ollama сервер завершил работу"))
+                else:
+                    msg = "".join(output).strip() or f"Код завершения: {ret}"
+                    self.master.after(0, lambda: self.status_var.set("Ollama остановился с ошибкой"))
+                    self.master.after(0, lambda: messagebox.showerror("Ollama", f"Сервер Ollama остановлен: {msg}"))
+                self.master.after(0, self.update_ollama_status)
 
-                def _wait_ready() -> None:
-                    url = f"http://127.0.0.1:{port}/"
-                    for _ in range(20):
-                        try:
-                            with urllib.request.urlopen(url, timeout=1):
-                                self.master.after(0, lambda: self.status_var.set("Ollama сервер запущен"))
-                                self.master.after(0, lambda: messagebox.showinfo("Ollama", "Сервер Ollama запущен"))
-                                return
-                        except Exception:
-                            time.sleep(0.5)
-                    self.master.after(0, lambda: self.status_var.set("Ollama не отвечает"))
-                    self.master.after(0, lambda: messagebox.showerror("Ollama", "Сервер Ollama не ответил"))
-
-                threading.Thread(target=_wait_ready, daemon=True).start()
-            except Exception as exc:
-                self.master.after(0, lambda: self.status_var.set("Ошибка запуска Ollama"))
-                self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось запустить сервер: {exc}"))
+            threading.Thread(target=_wait_ready, daemon=True).start()
+            threading.Thread(target=_monitor, daemon=True).start()
 
         threading.Thread(target=_run, daemon=True).start()
 
     def stop_ollama(self) -> None:
         """Stop the Ollama server process."""
         self.status_var.set("Остановка Ollama...")
+        self._ollama_stopping = False
 
-        def _run() -> None:
+        def _stop_internal(proc: subprocess.Popen[str]) -> None:
+            try:
+                self._ollama_stopping = True
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+            except Exception as exc:  # pragma: no cover - unexpected errors
+                self._ollama_stopping = False
+                self.master.after(0, lambda: self.status_var.set("Ошибка остановки Ollama"))
+                self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось остановить сервер: {exc}"))
+
+        def _stop_external() -> None:
             try:
                 if os.name == "nt":
-                    proc = subprocess.Popen(["taskkill", "/f", "/im", "ollama.exe"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    cmd = ["taskkill", "/f", "/im", "ollama.exe"]
                 else:
-                    proc = subprocess.Popen(["pkill", "-f", "ollama serve"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                output: list[str] = []
-                if proc.stdout:
-                    for line in proc.stdout:
-                        output.append(line)
-                        self.master.after(0, lambda line=line: self.append_ollama_log(line.rstrip()))
-                ret = proc.wait()
-                if ret != 0:
-                    msg = "".join(output).strip() or "Неизвестная ошибка"
-                    self.master.after(0, lambda: self.status_var.set("Ошибка остановки Ollama"))
-                    self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось остановить сервер: {msg}"))
-                    return
-                self.master.after(0, lambda: self.status_var.set("Ollama сервер остановлен"))
-                self.master.after(0, lambda: messagebox.showinfo("Ollama", "Сервер Ollama остановлен"))
+                    cmd = ["pkill", "-f", "ollama serve"]
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                if result.returncode == 0:
+                    self.master.after(0, lambda: self.status_var.set("Ollama сервер остановлен"))
+                    self.master.after(0, self.update_ollama_status)
+                    self.master.after(0, lambda: messagebox.showinfo("Ollama", "Сервер Ollama остановлен"))
+                else:
+                    msg = result.stdout.strip() or "Процесс Ollama не найден"
+                    self.master.after(0, lambda: self.status_var.set("Ollama не найден"))
+                    self.master.after(0, self.update_ollama_status)
+                    self.master.after(0, lambda: messagebox.showwarning("Ollama", msg))
             except Exception as exc:
                 self.master.after(0, lambda: self.status_var.set("Ошибка остановки Ollama"))
                 self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось остановить сервер: {exc}"))
 
-        threading.Thread(target=_run, daemon=True).start()
+        if self._ollama_process and self._ollama_process.poll() is None:
+            threading.Thread(target=_stop_internal, args=(self._ollama_process,), daemon=True).start()
+        else:
+            threading.Thread(target=_stop_external, daemon=True).start()
 
     def delete_key(self) -> None:
         if not messagebox.askyesno("Удалить ключ", "Удалить API ключ?"):
