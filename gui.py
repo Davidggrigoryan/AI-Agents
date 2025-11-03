@@ -93,6 +93,9 @@ class ControlPanel:
         self._sort_dirs: dict[str, bool] = {}
         self.editing_task: Task | None = None
         self.chat_messages: list[dict[str, str]] = []
+        self.ollama_status_var = tk.StringVar(value="Ollama: неизвестно")
+        self.ollama_status_canvas: tk.Canvas | None = None
+        self._ollama_status_after: str | None = None
 
         self.notebook = ttk.Notebook(master)
         self.notebook.pack(fill="both", expand=True)
@@ -298,13 +301,19 @@ class ControlPanel:
         self.chat_model_combo.pack(side="left", padx=5)
         ToolTip(self.chat_model_combo, "Выберите модель Ollama")
 
-        refresh_btn = ttk.Button(top, text="Обновить", command=self.refresh_models)
+        refresh_btn = ttk.Button(top, text="Обновить", command=self.refresh_chat_resources)
         refresh_btn.pack(side="left")
         ToolTip(refresh_btn, "Запросить список моделей Ollama")
 
         clear_btn = ttk.Button(top, text="Очистить чат", command=self.clear_chat)
         clear_btn.pack(side="right")
         ToolTip(clear_btn, "Удалить историю переписки")
+
+        status_frame = ttk.Frame(top)
+        status_frame.pack(side="left", padx=(15, 0))
+        self.ollama_status_canvas = tk.Canvas(status_frame, width=14, height=14, highlightthickness=0)
+        self.ollama_status_canvas.pack(side="left")
+        ttk.Label(status_frame, textvariable=self.ollama_status_var).pack(side="left", padx=(4, 0))
 
         text_frame = ttk.Frame(container)
         text_frame.pack(fill="both", expand=True, pady=(10, 5))
@@ -324,7 +333,7 @@ class ControlPanel:
         send_btn.pack(side="left", padx=(5, 0))
         ToolTip(send_btn, "Отправить сообщение в Ollama")
 
-        self.refresh_models()
+        self.refresh_chat_resources()
 
     def _build_settings_tab(self) -> None:
         frame = ttk.Frame(self.settings_tab)
@@ -688,6 +697,36 @@ class ControlPanel:
 
     # ------------------------------------------------------------------
     # actions
+    def refresh_chat_resources(self) -> None:
+        """Update the chat tab status indicator and available models."""
+        self.update_ollama_status()
+        self.refresh_models()
+
+    def update_ollama_status(self, schedule: bool = True) -> None:
+        """Check Ollama availability and update the indicator."""
+
+        def _run() -> None:
+            port = self._current_ollama_port()
+            url = f"http://127.0.0.1:{port}/"
+            try:
+                with urllib.request.urlopen(url, timeout=3):
+                    status = ("Онлайн", "#2ecc71")
+            except Exception:
+                status = ("Оффлайн", "#f7c948")
+            self.master.after(0, lambda: self._apply_ollama_status(*status, schedule=schedule))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _apply_ollama_status(self, text: str, color: str, schedule: bool = True) -> None:
+        self.ollama_status_var.set(f"Ollama: {text}")
+        if self.ollama_status_canvas:
+            self.ollama_status_canvas.delete("all")
+            self.ollama_status_canvas.create_oval(2, 2, 12, 12, fill=color, outline="")
+        if schedule:
+            if self._ollama_status_after:
+                self.master.after_cancel(self._ollama_status_after)
+            self._ollama_status_after = self.master.after(10000, self.update_ollama_status)
+
     def refresh_models(self) -> None:
         """Fetch available Ollama models and update the selector."""
 
