@@ -2,7 +2,7 @@
   {
     "name": "Researcher-1",
     "role": "",
-    "running": false,
+    "running": true,
     "prompt": "",
     "mode": "local"
   },
