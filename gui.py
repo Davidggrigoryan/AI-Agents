@@ -552,11 +552,17 @@ class ControlPanel:
 
         def _run() -> None:
             try:
+                env = os.environ.copy()
+                # Ollama reads the listen address from the OLLAMA_HOST variable (host:port).
+                # Bind to localhost with the configured port so the UI can control it.
+                env["OLLAMA_HOST"] = f"127.0.0.1:{port}"
+
                 proc = subprocess.Popen(
-                    ["ollama", "serve", "--port", port],
+                    ["ollama", "serve"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    env=env,
                 )
             except FileNotFoundError:
                 self.master.after(0, lambda: self.status_var.set("Ошибка запуска Ollama"))
