@@ -11,6 +11,7 @@ import re
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -91,6 +92,7 @@ class ControlPanel:
         self._task_counter = 1
         self._sort_dirs: dict[str, bool] = {}
         self.editing_task: Task | None = None
+        self.chat_messages: list[dict[str, str]] = []
 
         self.notebook = ttk.Notebook(master)
         self.notebook.pack(fill="both", expand=True)
@@ -106,6 +108,10 @@ class ControlPanel:
         self.agents_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.agents_tab, text="Агенты")
         self._build_agents_tab()
+
+        self.chat_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.chat_tab, text="Чат")
+        self._build_chat_tab()
 
         self.settings_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.settings_tab, text="Настройки")
@@ -279,6 +285,46 @@ class ControlPanel:
         save_btn = ttk.Button(manage_frame, text="Сохранить", command=self.save_agent_settings)
         save_btn.grid(row=4, column=1, pady=5, sticky="w")
         ToolTip(save_btn, "Сохранить настройки агента")
+
+    def _build_chat_tab(self) -> None:
+        container = ttk.Frame(self.chat_tab)
+        container.pack(fill="both", expand=True, padx=10, pady=10)
+
+        top = ttk.Frame(container)
+        top.pack(fill="x")
+
+        ttk.Label(top, text="Модель").pack(side="left")
+        self.chat_model_combo = ttk.Combobox(top, state="readonly", width=30)
+        self.chat_model_combo.pack(side="left", padx=5)
+        ToolTip(self.chat_model_combo, "Выберите модель Ollama")
+
+        refresh_btn = ttk.Button(top, text="Обновить", command=self.refresh_models)
+        refresh_btn.pack(side="left")
+        ToolTip(refresh_btn, "Запросить список моделей Ollama")
+
+        clear_btn = ttk.Button(top, text="Очистить чат", command=self.clear_chat)
+        clear_btn.pack(side="right")
+        ToolTip(clear_btn, "Удалить историю переписки")
+
+        text_frame = ttk.Frame(container)
+        text_frame.pack(fill="both", expand=True, pady=(10, 5))
+        self.chat_output = tk.Text(text_frame, state="disabled", wrap="word")
+        self.chat_output.pack(side="left", fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=self.chat_output.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.chat_output.config(yscrollcommand=scrollbar.set)
+
+        input_frame = ttk.Frame(container)
+        input_frame.pack(fill="x")
+        self.chat_entry = tk.Text(input_frame, height=4, wrap="word")
+        self.chat_entry.pack(side="left", fill="both", expand=True)
+        ToolTip(self.chat_entry, "Введите сообщение для модели")
+
+        send_btn = ttk.Button(input_frame, text="Отправить", command=self.send_chat)
+        send_btn.pack(side="left", padx=(5, 0))
+        ToolTip(send_btn, "Отправить сообщение в Ollama")
+
+        self.refresh_models()
 
     def _build_settings_tab(self) -> None:
         frame = ttk.Frame(self.settings_tab)
@@ -472,6 +518,14 @@ class ControlPanel:
         """Append a line from the Ollama process to the log output."""
         print(text)
 
+    def _current_ollama_port(self) -> str:
+        """Return the port configured for Ollama interactions."""
+        if hasattr(self, "ollama_port_var"):
+            port = self.ollama_port_var.get().strip()
+            if port:
+                return port
+        return str(self.config.get("ollama_port", "11434")) or "11434"
+
     def start_ollama(self) -> None:
         """Launch the Ollama server using a helper script and wait for readiness."""
         port = self.ollama_port_var.get().strip() or "11434"
@@ -634,6 +688,107 @@ class ControlPanel:
 
     # ------------------------------------------------------------------
     # actions
+    def refresh_models(self) -> None:
+        """Fetch available Ollama models and update the selector."""
+
+        def _run() -> None:
+            port = self._current_ollama_port()
+            url = f"http://127.0.0.1:{port}/api/tags"
+            try:
+                with urllib.request.urlopen(url, timeout=5) as response:
+                    payload = response.read().decode("utf-8")
+                data = json.loads(payload)
+                models = [item.get("name", "") for item in data.get("models", []) if item.get("name")]
+                if not models:
+                    raise ValueError("Список моделей пуст")
+                self.master.after(0, lambda: self._update_model_list(models))
+                self.master.after(0, lambda: self.status_var.set("Список моделей обновлен"))
+            except (urllib.error.URLError, ValueError, json.JSONDecodeError) as exc:
+                self.master.after(0, lambda: messagebox.showerror("Ollama", f"Не удалось получить список моделей: {exc}"))
+                self.master.after(0, lambda: self.status_var.set("Ошибка запроса моделей"))
+            except Exception as exc:  # pragma: no cover - unexpected errors
+                self.master.after(0, lambda: messagebox.showerror("Ollama", f"Непредвиденная ошибка: {exc}"))
+                self.master.after(0, lambda: self.status_var.set("Ошибка запроса моделей"))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _update_model_list(self, models: list[str]) -> None:
+        self.chat_model_combo["values"] = models
+        if models:
+            current = self.chat_model_combo.get()
+            if current not in models:
+                self.chat_model_combo.set(models[0])
+
+    def _append_chat(self, author: str, text: str) -> None:
+        self.chat_output.config(state="normal")
+        self.chat_output.insert(tk.END, f"{author}: {text}\n")
+        self.chat_output.see(tk.END)
+        self.chat_output.config(state="disabled")
+
+    def clear_chat(self) -> None:
+        self.chat_messages.clear()
+        self.chat_output.config(state="normal")
+        self.chat_output.delete("1.0", tk.END)
+        self.chat_output.config(state="disabled")
+        self.status_var.set("История чата очищена")
+
+    def send_chat(self) -> None:
+        message = self.chat_entry.get("1.0", tk.END).strip()
+        if not message:
+            return
+        model = self.chat_model_combo.get().strip()
+        if not model:
+            messagebox.showwarning("Чат", "Выберите модель для общения")
+            return
+        self.chat_entry.delete("1.0", tk.END)
+        self.chat_messages.append({"role": "user", "content": message})
+        self._append_chat("Вы", message)
+        self.status_var.set("Запрос к Ollama отправлен")
+
+        threading.Thread(target=self._send_to_ollama, args=(model,), daemon=True).start()
+
+    def _send_to_ollama(self, model: str) -> None:
+        messages = list(self.chat_messages)
+        port = self._current_ollama_port()
+        url = f"http://127.0.0.1:{port}/api/chat"
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+        }
+        data = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                raw = response.read().decode("utf-8")
+            result = json.loads(raw)
+            message = result.get("message", {}).get("content", "").strip()
+            if not message:
+                raise ValueError("Пустой ответ от модели")
+
+            def _success() -> None:
+                self.chat_messages.append({"role": "assistant", "content": message})
+                author = model or "Модель"
+                self._append_chat(author, message)
+                self.status_var.set("Ответ от Ollama получен")
+
+            self.master.after(0, _success)
+        except (urllib.error.URLError, ValueError, json.JSONDecodeError) as exc:
+
+            def _error() -> None:
+                self.status_var.set("Ошибка ответа Ollama")
+                messagebox.showerror("Чат", f"Не удалось получить ответ от модели: {exc}")
+
+            self.master.after(0, _error)
+        except Exception as exc:  # pragma: no cover - unexpected errors
+
+            def _unexpected() -> None:
+                self.status_var.set("Ошибка ответа Ollama")
+                messagebox.showerror("Чат", f"Непредвиденная ошибка: {exc}")
+
+            self.master.after(0, _unexpected)
+
     def add_task(
         self,
         title: str | None = None,
